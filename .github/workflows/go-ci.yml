@@ -16,7 +16,7 @@ jobs:
         with:
           go-version-file: lazy-tcp-proxy/go.mod
           cache-dependency-path: lazy-tcp-proxy/go.sum
-      - uses: golangci/golangci-lint-action@v8
+      - uses: golangci/golangci-lint-action@v9
         with:
           working-directory: lazy-tcp-proxy
 
