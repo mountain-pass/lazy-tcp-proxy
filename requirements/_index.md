@@ -57,3 +57,4 @@
 | REQ-053 | Platform Integration Documentation (Podman, Unraid, TrueNAS SCALE)     | Medium | Completed   | 2026-04-08 | [2026-04-08-platform-integration-docs.md](2026-04-08-platform-integration-docs.md) |
 | REQ-054 | Docker Compose Recipes for Popular Service Images                       | Medium | Completed   | 2026-04-08 | [2026-04-08-docker-recipes-popular-services.md](2026-04-08-docker-recipes-popular-services.md) |
 | REQ-055 | Fix UDP First Packet Drop on Container Startup                          | High   | Completed   | 2026-04-09 | [2026-04-09-fix-udp-first-packet-drop.md](2026-04-09-fix-udp-first-packet-drop.md) |
+| REQ-056 | Fix: Stale Docker Network Error on Container Start                      | High   | Planned     | 2026-04-11 | [2026-04-11-fix-stale-network-error.md](2026-04-11-fix-stale-network-error.md) |
