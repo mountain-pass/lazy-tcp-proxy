@@ -6,58 +6,97 @@
 
 ## Problem Statement
 
-When a Docker container is started by lazy-tcp-proxy and its configured network has been
-deleted (e.g. after `docker-compose down` removed the network but the container still
-exists), Docker returns:
+When `docker compose down` is run on the proxy's compose stack, Docker Compose deletes
+any networks it created — including the default project network (e.g. `myproject_default`).
+If a managed container (e.g. pihole) was on that same default network (because both
+compose files were run from the same directory without an explicit `name:` or `networks:`
+block), the managed container now has a stale reference to a deleted network.
+
+The next time a connection arrives and the proxy calls `docker start <container>`, Docker
+returns:
 
 ```
 Error response from daemon: failed to set up container networking: network <SHA> not found
 ```
 
-The proxy propagates this as `"starting container: <error>"`, giving the user no
-indication of the root cause or how to fix it.
+The proxy propagates this as `"starting container: <error>"` with no indication of the
+root cause or how to fix it.
+
+There are two failure modes to address:
+
+1. **Proactive**: detect at startup/discovery that a managed container shares the proxy's
+   compose default network, and warn before anything breaks.
+2. **Reactive**: when `ContainerStart` fails with "network … not found", emit an
+   actionable hint so the operator knows what went wrong and how to recover.
 
 ## Functional Requirements
 
-1. When `ContainerStart` fails with a "network … not found" error, the proxy MUST log an
-   additional actionable hint message that:
-   - Identifies the problem (stale network reference in the container config)
-   - Tells the user how to fix it (recreate the container)
-2. The proxy continues to return the original error to callers so existing error-handling
-   behaviour is unchanged.
+1. **Proactive warning** — during container discovery (and when new containers are
+   registered via events), if a managed container is already on the same network as the
+   proxy AND that network is a Docker Compose default network (label
+   `com.docker.compose.network=default`), log a warning.
+2. **Reactive hint** — when `ContainerStart` fails with an error containing both
+   `"network"` and `"not found"`, log an additional actionable hint message before
+   returning the original error.
+3. Neither change alters returned errors or existing control flow.
 
 ## User Experience Requirements
 
-- The operator should immediately understand the problem without having to consult Docker
-  documentation.
-- Example log output:
-  ```
-  docker: container pihole has a stale network reference (<SHA>); recreate the container to fix this (e.g. docker rm pihole && docker-compose up -d pihole)
-  ```
+**Proactive warning** (logged at discovery time):
+
+```
+docker: WARNING: container "pihole" shares the proxy's default compose network "myproject_default".
+  Running "docker compose down" on the proxy stack will delete this network and leave "pihole" unable to restart.
+  Fix: add a top-level "name:" field to each of your compose files to give them unique project names.
+```
+
+**Reactive hint** (logged when ContainerStart fails):
+
+```
+docker: container "pihole" has a stale network reference; recreate the container to fix this (docker rm pihole && docker compose up -d)
+```
+
+Note: the reactive hint must not assume compose file names — the `docker compose up -d`
+command is given without a `-f` flag as a generic starting point.
 
 ## Technical Requirements
 
-- Detection: check whether the error string from `ContainerStart` matches the pattern
-  `"network"` AND `"not found"` (case-insensitive substring check is sufficient; no
-  regex required).
-- Change is limited to `EnsureRunning()` in
+- **Proactive warning**: add a helper `warnSharedDefaultNetworks(ctx, info)` called from
+  `Discover()` and from the `create`/`start` branch of `WatchEvents()`, both in
   `lazy-tcp-proxy/internal/docker/manager.go`.
-- Do NOT change the returned error — only add a `log.Printf` hint before returning.
+  - For each network ID in `info.NetworkIDs`, inspect the network.
+  - If the network label `com.docker.compose.network` equals `"default"` AND the proxy
+    container (`m.selfID`) is already a member → log the warning.
+  - Skip silently if `m.selfID` is empty (proxy not running inside Docker).
+- **Reactive hint**: in `EnsureRunning()`, after `ContainerStart` returns an error,
+  check `strings.Contains(err.Error(), "network") && strings.Contains(err.Error(), "not found")`;
+  if true, log the hint before returning.
+- All changes confined to `lazy-tcp-proxy/internal/docker/manager.go`.
+- No new imports or dependencies required (`strings` is already imported).
 
 ## Acceptance Criteria
 
-- [ ] When `ContainerStart` returns an error containing both "network" and "not found",
-      a hint log line is emitted that mentions "stale network" and "recreate".
-- [ ] When `ContainerStart` fails for any other reason, no hint log is emitted.
+- [ ] At startup, if a managed container shares the proxy's compose default network,
+      a warning is logged containing "shares", the network name, and "name:".
+- [ ] The warning is also logged when a container is dynamically registered via events.
+- [ ] No warning is logged when the managed container is on a different network from
+      the proxy, or on a non-default compose network.
+- [ ] When `ContainerStart` returns an error containing "network" and "not found",
+      a hint log line is emitted mentioning "stale network reference" and "recreate".
+- [ ] When `ContainerStart` fails for any other reason, no hint is logged.
 - [ ] When `ContainerStart` succeeds, behaviour is unchanged.
 - [ ] `go test ./...` continues to pass.
 
 ## Dependencies
 
-- REQ-001 (Core TCP Proxy for Docker Containers) — this is a UX improvement to the
-  existing container-start flow.
+- REQ-001 (Core TCP Proxy for Docker Containers) — UX improvements to discovery and
+  container-start flow.
 
 ## Implementation Notes
 
-- The check can reuse the existing `strings` import already present in `manager.go`.
-- No new dependencies are required.
+- The `com.docker.compose.network=default` label is set by Docker Compose on
+  auto-created project default networks. Explicitly defined named networks carry the
+  actual network name instead, so the check is naturally scoped to the problematic case.
+- Network membership is already inspected in `JoinNetworks()`; the new helper can reuse
+  the same `NetworkInspect` call pattern.
+- The `strings` package is already imported in `manager.go`.
