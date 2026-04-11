@@ -1,3 +1,5 @@
+name: wordpress
+
 services:
   wordpress:
     image: wordpress:latest

@@ -1,3 +1,5 @@
+name: ollama-cpu
+
 services:
   ollama:
     image: ollama/ollama

@@ -1,3 +1,5 @@
+name: open-ssh
+
 services:
   # ssh admin@localhost -p 9004
   openssh-server:

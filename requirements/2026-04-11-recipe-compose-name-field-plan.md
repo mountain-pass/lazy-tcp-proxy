@@ -2,7 +2,7 @@
 
 **Requirement**: [2026-04-11-recipe-compose-name-field.md](2026-04-11-recipe-compose-name-field.md)
 **Date**: 2026-04-11
-**Status**: Draft
+**Status**: Implemented
 
 ## Implementation Steps
 

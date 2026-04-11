@@ -1,3 +1,5 @@
+name: n8n
+
 services:
   n8n:
     image: n8nio/n8n

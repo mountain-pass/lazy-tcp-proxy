@@ -2,7 +2,7 @@
 
 **Requirement**: [2026-04-11-fix-stale-network-error.md](2026-04-11-fix-stale-network-error.md)
 **Date**: 2026-04-11
-**Status**: Draft
+**Status**: Implemented
 
 ## Implementation Steps
 

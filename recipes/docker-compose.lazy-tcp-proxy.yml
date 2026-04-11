@@ -1,3 +1,5 @@
+name: lazy-tcp-proxy
+
 services:
   lazy-tcp-proxy:
     container_name: lazy-tcp-proxy

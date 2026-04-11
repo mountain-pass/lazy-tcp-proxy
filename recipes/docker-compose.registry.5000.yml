@@ -1,3 +1,5 @@
+name: registry
+
 services:
   registry:
     image: registry:2

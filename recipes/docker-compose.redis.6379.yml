@@ -1,3 +1,5 @@
+name: redis
+
 services:
   redis:
     image: redis:alpine

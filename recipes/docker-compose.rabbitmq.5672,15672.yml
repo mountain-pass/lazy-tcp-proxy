@@ -1,3 +1,5 @@
+name: rabbitmq
+
 services:
   rabbitmq:
     image: rabbitmq:management-alpine
