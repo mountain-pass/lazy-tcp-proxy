@@ -21,3 +21,4 @@ services:
     labels:
       - "lazy-tcp-proxy.enabled=true"
       - "lazy-tcp-proxy.ports=4444:4444,7900:7900"
+      - "lazy-tcp-proxy.idle-timeout-secs=600"
