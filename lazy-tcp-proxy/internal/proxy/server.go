@@ -24,7 +24,6 @@ import (
 )
 
 const (
-	dialRetries  = 30
 	dialInterval = time.Second
 	copyBufSize  = 32 * 1024
 )
@@ -79,14 +78,15 @@ var copyBufPool = sync.Pool{
 
 // targetState holds runtime state for a single listen-port→container-port mapping.
 type targetState struct {
-	info        types.TargetInfo
-	targetPort  int
-	listener    net.Listener
-	lastActive  time.Time
-	activeConns atomic.Int32
-	idleTimeout *time.Duration // nil = use server default
-	running     bool
-	removed     bool
+	info         types.TargetInfo
+	targetPort   int
+	listener     net.Listener
+	lastActive   time.Time
+	activeConns  atomic.Int32
+	idleTimeout  *time.Duration // nil = use server default
+	startTimeout time.Duration  // how long to retry dialing the upstream on cold start
+	running      bool
+	removed      bool
 }
 
 // webhookPayload is the JSON body sent to a container's webhook URL.
@@ -377,6 +377,7 @@ func (s *ProxyServer) RegisterTarget(info types.TargetInfo) {
 			existing.info = info
 			existing.targetPort = m.TargetPort
 			existing.idleTimeout = info.IdleTimeout
+			existing.startTimeout = effectiveTimeout(info.StartTimeout, s.startTimeout)
 			existing.running = info.Running
 			existing.removed = false
 			log.Printf("proxy: updated TCP target \033[33m%s\033[0m on port %d->%d", info.ContainerName, m.ListenPort, m.TargetPort)
@@ -390,12 +391,13 @@ func (s *ProxyServer) RegisterTarget(info types.TargetInfo) {
 		}
 
 		ts := &targetState{
-			info:        info,
-			targetPort:  m.TargetPort,
-			listener:    ln,
-			lastActive:  time.Time{}, // zero — immediately idle
-			idleTimeout: info.IdleTimeout,
-			running:     info.Running,
+			info:         info,
+			targetPort:   m.TargetPort,
+			listener:     ln,
+			lastActive:   time.Time{}, // zero — immediately idle
+			idleTimeout:  info.IdleTimeout,
+			startTimeout: effectiveTimeout(info.StartTimeout, s.startTimeout),
+			running:      info.Running,
 		}
 		s.targets[m.ListenPort] = ts
 		log.Printf("proxy: registered target \033[33m%s\033[0m, TCP %d->%d", info.ContainerName, m.ListenPort, m.TargetPort)
@@ -739,10 +741,14 @@ func (s *ProxyServer) handleConn(conn net.Conn, ts *targetState) {
 		hint = ts.info.NetworkIDs[0]
 	}
 
-	// Retry dial to upstream
+	// Retry dial to upstream — budget derived from the configured start timeout.
+	retries := int((ts.startTimeout + dialInterval - 1) / dialInterval)
+	if retries < 1 {
+		retries = 1
+	}
 	var upstream net.Conn
 	var lastErr error
-	for attempt := 1; attempt <= dialRetries; attempt++ {
+	for attempt := 1; attempt <= retries; attempt++ {
 		host, err := s.backend.GetUpstreamHost(ctx, ts.info.ContainerID, hint)
 		if err != nil {
 			log.Printf("proxy: attempt %d: could not get upstream host for \033[33m%s\033[0m: %v", attempt, ts.info.ContainerName, err)
