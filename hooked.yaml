@@ -12,6 +12,9 @@ scripts:
       docker rmi lazy-tcp-proxy || true
       docker rmi mountainpass/lazy-tcp-proxy || true
 
+  down:
+    $cmd: docker stop lazy-tcp-proxy && docker rm lazy-tcp-proxy
+
   build:
     $cmd: |
       docker compose -f recipes/docker-compose.lazy-tcp-proxy.yml down || true

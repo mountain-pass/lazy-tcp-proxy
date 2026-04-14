@@ -86,8 +86,11 @@ const statusDashboardHTML = `<!DOCTYPE html>
       border: 1px solid #2d3748;
       border-radius: 8px;
       padding: 1rem 1.25rem;
+	  max-width: 400px;
+	  width: 100%;
+	  margin: auto;
     }
-    .container-header { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.5rem; }
+    .container-header { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
     .container-name { font-weight: 600; font-size: 1rem; }
     .status-badge {
       font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
@@ -151,21 +154,12 @@ const statusDashboardHTML = `<!DOCTYPE html>
           if (statusRank[s] > statusRank[best]) best = s;
         }
 
-        const portBadges = group.ports.map(p => {
-          const conns = p.active_conns > 0
-            ? ' <span class="active-conns">' + p.active_conns + ' conn' + (p.active_conns !== 1 ? 's' : '') + '</span>'
-            : '';
-          return '<span class="port-entry">:' + p.listen_port + ' &rarr; :' + p.target_port + conns + '</span>';
-        }).join('');
-
         html +=
           '<div class="container-card">' +
             '<div class="container-header">' +
               '<span class="container-name">' + esc(group.name) + '</span>' +
               '<span class="status-badge status-' + best + '">' + best + '</span>' +
-              '<span class="container-id">' + esc(group.id) + '</span>' +
             '</div>' +
-            '<div class="ports">' + portBadges + '</div>' +
           '</div>';
       }
       el.innerHTML = html;
