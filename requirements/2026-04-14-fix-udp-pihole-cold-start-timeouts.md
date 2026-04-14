@@ -32,7 +32,7 @@ problems occur:
 1. A configurable **start timeout** replaces the fixed retry constants:
    - Global default: `START_TIMEOUT_SECS` environment variable (default
      **30 seconds**).
-   - Per-container override: `lazy-tcp-proxy.start-timeout` label (seconds).
+   - Per-container override: `lazy-tcp-proxy.start-timeout-secs` label (seconds).
    - The retry interval stays fixed at 500 ms; the number of retries is
      derived as `ceil(startTimeout / 500ms)`.
 
@@ -81,7 +81,7 @@ problems occur:
     becomes `false` (success or timeout).
 - `ProxyServer` gains a `startTimeout time.Duration` field (global default).
 - `TargetInfo` (or the listener creation path) reads
-  `lazy-tcp-proxy.start-timeout` and stores it alongside
+  `lazy-tcp-proxy.start-timeout-secs` and stores it alongside
   `lazy-tcp-proxy.idle-timeout-secs`.
 - The shared-wait must not deadlock if the listener is removed while
   goroutines are waiting (the `removed` flag should trigger an early
@@ -93,7 +93,7 @@ problems occur:
 ## Acceptance Criteria
 
 - [ ] `START_TIMEOUT_SECS` env var is read; default is 30 s.
-- [ ] `lazy-tcp-proxy.start-timeout` label overrides the global default for
+- [ ] `lazy-tcp-proxy.start-timeout-secs` label overrides the global default for
       that container.
 - [ ] While one goroutine is in the first-datagram retry loop, additional
       `startUDPFlow` goroutines for the same listener block rather than
@@ -110,7 +110,7 @@ problems occur:
 - [ ] Goroutines blocked on the wait unblock cleanly if the listener is
       removed while they are waiting (no goroutine leak).
 - [ ] README updated: `START_TIMEOUT_SECS` in the Environment Variables
-      table; `lazy-tcp-proxy.start-timeout` in the Container Label
+      table; `lazy-tcp-proxy.start-timeout-secs` in the Container Label
       Configuration table; a note in the UDP Support section.
 - [ ] Existing unit and integration tests pass.
 
@@ -127,7 +127,7 @@ problems occur:
 - REQ-055 (Fix UDP First Packet Drop on Container Startup) — extends the
   retry mechanism introduced in REQ-055.
 - REQ-037 (Per-Container Idle Timeout Label Override) — the
-  `lazy-tcp-proxy.start-timeout` label follows the same pattern.
+  `lazy-tcp-proxy.start-timeout-secs` label follows the same pattern.
 
 ## Implementation Notes
 
