@@ -2,7 +2,7 @@
 
 **Requirement**: [2026-04-14-fix-udp-pihole-cold-start-timeouts.md](2026-04-14-fix-udp-pihole-cold-start-timeouts.md)
 **Date**: 2026-04-14
-**Status**: Draft
+**Status**: Implemented
 
 ## Implementation Steps
 

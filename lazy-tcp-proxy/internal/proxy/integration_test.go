@@ -83,6 +83,7 @@ func newIntegrationServer(t *testing.T, host string) *ProxyServer {
 		udpTargets:   make(map[int]*udpListenerState),
 		nameToID:     make(map[string]string),
 		idleTimeout:  5 * time.Minute,
+		startTimeout: 30 * time.Second,
 		pollInterval: 15 * time.Second,
 		backend:      &integrationMock{host: host},
 	}

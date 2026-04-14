@@ -16,10 +16,9 @@ import (
 
 const udpBufSize = 65535
 
-const (
-	udpFirstDatagramRetries  = 10
-	udpFirstDatagramInterval = 500 * time.Millisecond
-)
+// udpReadinessInterval is the polling interval used during the upstream
+// readiness probe (leader retry loop and non-leader direct send timeout).
+const udpReadinessInterval = 500 * time.Millisecond
 
 // udpFlow represents one active client→container UDP flow.
 type udpFlow struct {
@@ -37,12 +36,18 @@ type udpListenerState struct {
 	info        types.TargetInfo
 	lastActive  time.Time
 	activeFlows atomic.Int32
-	idleTimeout *time.Duration // nil = use server default
+	idleTimeout  *time.Duration // nil = use server default
+	startTimeout time.Duration  // how long to wait for upstream to respond on cold start
 	running     bool
 	removed     bool
 	mu          sync.Mutex
 	flows       map[string]*udpFlow // key: clientAddr.String()
 	pending     map[string]bool     // client addrs whose flows are being established
+
+	// Upstream readiness state — all fields protected by mu.
+	upstreamReady    bool       // true once upstream responded to a first datagram this session
+	upstreamStarting bool       // true while the leader goroutine holds the retry loop
+	upstreamReadyCond *sync.Cond // broadcast when upstreamStarting transitions to false
 }
 
 // udpReadLoop is the core datagram dispatch loop. Runs in a goroutine per listener.
@@ -96,7 +101,8 @@ func (s *ProxyServer) udpReadLoop(uls *udpListenerState) {
 }
 
 // startUDPFlow ensures the container is running, dials the upstream UDP port,
-// registers the flow, and launches the upstream read loop.
+// waits for the upstream to be ready (shared across concurrent flows for the
+// same listener), registers the flow, and launches the upstream read loop.
 func (s *ProxyServer) startUDPFlow(uls *udpListenerState, clientAddr *net.UDPAddr, firstDatagram []byte) {
 	key := clientAddr.String()
 	ctx := context.Background()
@@ -143,6 +149,151 @@ func (s *ProxyServer) startUDPFlow(uls *udpListenerState, clientAddr *net.UDPAdd
 		return
 	}
 
+	// Readiness role selection.
+	//
+	// Three cases:
+	//   fast-path  — upstream already confirmed ready this session; skip retry loop.
+	//   follower   — another goroutine is already probing; block until outcome known.
+	//   leader     — first goroutine to see the upstream unready; runs the retry loop.
+	uls.mu.Lock()
+	isLeader := false
+	switch {
+	case uls.upstreamReady:
+		// Fast path: already confirmed ready.
+		uls.mu.Unlock()
+	case uls.upstreamStarting:
+		// Follower: wait for the leader's outcome.
+		for uls.upstreamStarting && !uls.removed {
+			uls.upstreamReadyCond.Wait()
+		}
+		if !uls.upstreamReady || uls.removed {
+			uls.mu.Unlock()
+			upstreamConn.Close() //nolint:errcheck
+			cleanup()
+			return
+		}
+		uls.mu.Unlock()
+	default:
+		// Leader: this goroutine owns the readiness probe.
+		uls.upstreamStarting = true
+		isLeader = true
+		uls.mu.Unlock()
+	}
+
+	if isLeader {
+		// Retry budget: ceil(startTimeout / readinessInterval), minimum 1.
+		retries := int((uls.startTimeout + udpReadinessInterval - 1) / udpReadinessInterval)
+		if retries < 1 {
+			retries = 1
+		}
+
+		buf := make([]byte, udpBufSize)
+		responded := false
+		for attempt := 1; attempt <= retries; attempt++ {
+			if _, err := upstreamConn.Write(firstDatagram); err != nil {
+				log.Printf("proxy: udp: write first datagram to \033[33m%s\033[0m failed: %v", uls.info.ContainerName, err)
+				break
+			}
+			if err := upstreamConn.SetReadDeadline(time.Now().Add(udpReadinessInterval)); err != nil {
+				log.Printf("proxy: udp: set deadline for \033[33m%s\033[0m failed: %v", uls.info.ContainerName, err)
+				break
+			}
+			n, readErr := upstreamConn.Read(buf)
+			if err := upstreamConn.SetReadDeadline(time.Time{}); err != nil {
+				log.Printf("proxy: udp: clear deadline for \033[33m%s\033[0m failed: %v", uls.info.ContainerName, err)
+			}
+			if readErr == nil {
+				// Upstream responded — forward first reply to client.
+				if _, werr := uls.listenConn.WriteToUDP(buf[:n], clientAddr); werr != nil {
+					log.Printf("proxy: udp: write initial response to \033[36m%s\033[0m failed: %v", clientAddr, werr)
+				}
+				responded = true
+				break
+			}
+			isRetryable := (func() bool {
+				if netErr, ok := readErr.(net.Error); ok && netErr.Timeout() {
+					return true
+				}
+				return errors.Is(readErr, syscall.ECONNREFUSED)
+			})()
+			if !isRetryable {
+				log.Printf("proxy: udp: upstream read error for \033[33m%s\033[0m: %v", uls.info.ContainerName, readErr)
+				break
+			}
+			if attempt < retries {
+				log.Printf("proxy: udp: upstream \033[33m%s\033[0m not ready, retrying (%d/%d)…",
+					uls.info.ContainerName, attempt, retries)
+			}
+		}
+
+		// Publish outcome to waiting followers.
+		uls.mu.Lock()
+		uls.upstreamStarting = false
+		if responded {
+			uls.upstreamReady = true
+		}
+		uls.upstreamReadyCond.Broadcast()
+		uls.mu.Unlock()
+
+		if !responded {
+			log.Printf("proxy: udp: upstream \033[33m%s\033[0m did not respond within %s; stopping container",
+				uls.info.ContainerName, uls.startTimeout)
+			go func() {
+				if err := s.backend.StopContainer(context.Background(), uls.info.ContainerID, uls.info.ContainerName); err != nil {
+					log.Printf("proxy: udp: error stopping \033[33m%s\033[0m after start timeout: %v", uls.info.ContainerName, err)
+				}
+			}()
+			upstreamConn.Close() //nolint:errcheck
+			cleanup()
+			return
+		}
+
+		// Leader succeeded: register flow and start upstream read loop.
+		connID := newConnectionID()
+		flow := &udpFlow{
+			clientAddr:   clientAddr,
+			upstreamConn: upstreamConn,
+			lastActive:   time.Now(),
+			connectionID: connID,
+		}
+		uls.mu.Lock()
+		delete(uls.pending, key)
+		uls.flows[key] = flow
+		uls.lastActive = time.Now()
+		uls.mu.Unlock()
+		if uls.info.WebhookURL != "" {
+			go s.fireWebhook(uls.info.WebhookURL, "udp_flow_start", uls.info.ContainerID, uls.info.ContainerName, connID, clientAddr.IP.String(), clientAddr.Port)
+		}
+		uls.activeFlows.Add(1)
+		go s.udpUpstreamReadLoop(uls, flow)
+		return
+	}
+
+	// Non-leader path (fast-path or follower-woken): upstream is confirmed ready.
+	// Send the first datagram directly — no retry loop required.
+	buf := make([]byte, udpBufSize)
+	if _, err := upstreamConn.Write(firstDatagram); err != nil {
+		log.Printf("proxy: udp: write first datagram to \033[33m%s\033[0m failed: %v", uls.info.ContainerName, err)
+		upstreamConn.Close() //nolint:errcheck
+		cleanup()
+		return
+	}
+	if err := upstreamConn.SetReadDeadline(time.Now().Add(udpReadinessInterval)); err != nil {
+		log.Printf("proxy: udp: set deadline for \033[33m%s\033[0m failed: %v", uls.info.ContainerName, err)
+		upstreamConn.Close() //nolint:errcheck
+		cleanup()
+		return
+	}
+	n, readErr := upstreamConn.Read(buf)
+	if err := upstreamConn.SetReadDeadline(time.Time{}); err != nil {
+		log.Printf("proxy: udp: clear deadline for \033[33m%s\033[0m failed: %v", uls.info.ContainerName, err)
+	}
+	if readErr == nil {
+		if _, werr := uls.listenConn.WriteToUDP(buf[:n], clientAddr); werr != nil {
+			log.Printf("proxy: udp: write initial response to \033[36m%s\033[0m failed: %v", clientAddr, werr)
+		}
+	}
+	// Register flow even if no immediate response (fire-and-forget protocols).
 	connID := newConnectionID()
 	flow := &udpFlow{
 		clientAddr:   clientAddr,
@@ -150,69 +301,14 @@ func (s *ProxyServer) startUDPFlow(uls *udpListenerState, clientAddr *net.UDPAdd
 		lastActive:   time.Now(),
 		connectionID: connID,
 	}
-
 	uls.mu.Lock()
 	delete(uls.pending, key)
 	uls.flows[key] = flow
 	uls.lastActive = time.Now()
 	uls.mu.Unlock()
-
 	if uls.info.WebhookURL != "" {
 		go s.fireWebhook(uls.info.WebhookURL, "udp_flow_start", uls.info.ContainerID, uls.info.ContainerName, connID, clientAddr.IP.String(), clientAddr.Port)
 	}
-
-	// Send the first datagram with retries: the container process may not be ready
-	// to handle packets immediately after EnsureRunning returns (e.g. pihole's DNS
-	// daemon needs time to bind). For request/response protocols we send, wait
-	// briefly for a response, and forward it; on timeout we retry.
-	// udpUpstreamReadLoop is NOT started until this loop exits so there is never
-	// a concurrent reader on upstreamConn.
-	buf := make([]byte, udpBufSize)
-	for attempt := 1; attempt <= udpFirstDatagramRetries; attempt++ {
-		if _, err := upstreamConn.Write(firstDatagram); err != nil {
-			log.Printf("proxy: udp: write first datagram to \033[33m%s\033[0m failed: %v", uls.info.ContainerName, err)
-			break
-		}
-		if err := upstreamConn.SetReadDeadline(time.Now().Add(udpFirstDatagramInterval)); err != nil {
-			log.Printf("proxy: udp: set deadline for \033[33m%s\033[0m failed: %v", uls.info.ContainerName, err)
-			break
-		}
-		n, readErr := upstreamConn.Read(buf)
-		if err := upstreamConn.SetReadDeadline(time.Time{}); err != nil {
-			log.Printf("proxy: udp: clear deadline for \033[33m%s\033[0m failed: %v", uls.info.ContainerName, err)
-		}
-		if readErr == nil {
-			// Service responded — forward this first reply to the client.
-			if _, werr := uls.listenConn.WriteToUDP(buf[:n], clientAddr); werr != nil {
-				log.Printf("proxy: udp: write initial response to \033[36m%s\033[0m failed: %v", clientAddr, werr)
-			}
-			uls.mu.Lock()
-			flow.lastActive = time.Now()
-			uls.lastActive = time.Now()
-			uls.mu.Unlock()
-			break
-		}
-		isRetryable := (func() bool {
-			if netErr, ok := readErr.(net.Error); ok && netErr.Timeout() {
-				return true
-			}
-			return errors.Is(readErr, syscall.ECONNREFUSED)
-		})()
-		if isRetryable {
-			if attempt < udpFirstDatagramRetries {
-				log.Printf("proxy: udp: upstream \033[33m%s\033[0m not ready, retrying (%d/%d)…",
-					uls.info.ContainerName, attempt, udpFirstDatagramRetries)
-				continue
-			}
-			log.Printf("proxy: udp: upstream \033[33m%s\033[0m did not respond after %d attempts; continuing",
-				uls.info.ContainerName, udpFirstDatagramRetries)
-			break
-		}
-		// Non-retryable read error (connection closed, etc.)
-		log.Printf("proxy: udp: upstream read error for \033[33m%s\033[0m: %v", uls.info.ContainerName, readErr)
-		break
-	}
-
 	uls.activeFlows.Add(1)
 	go s.udpUpstreamReadLoop(uls, flow)
 }

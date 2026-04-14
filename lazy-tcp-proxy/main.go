@@ -20,6 +20,7 @@ import (
 const (
 	defaultPollInterval = 15 * time.Second
 	defaultIdleTimeout  = 120 * time.Second
+	defaultStartTimeout = 30 * time.Second
 )
 
 func resolveIdleTimeout() time.Duration {
@@ -31,6 +32,19 @@ func resolveIdleTimeout() time.Duration {
 	if err != nil || n < 0 {
 		log.Printf("IDLE_TIMEOUT_SECS=%q is invalid; using default %s", raw, defaultIdleTimeout)
 		return defaultIdleTimeout
+	}
+	return time.Duration(n) * time.Second
+}
+
+func resolveStartTimeout() time.Duration {
+	raw := os.Getenv("START_TIMEOUT_SECS")
+	if raw == "" {
+		return defaultStartTimeout
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 0 {
+		log.Printf("START_TIMEOUT_SECS=%q is invalid; using default %s", raw, defaultStartTimeout)
+		return defaultStartTimeout
 	}
 	return time.Duration(n) * time.Second
 }
@@ -262,7 +276,9 @@ func main() {
 	}
 	tick := resolvePollInterval()
 	log.Printf("inactivity check interval: %s (set POLL_INTERVAL_SECS to override)", tick)
-	srv := proxy.NewServer(ctx, mgr, startTime, idleTimeout, tick)
+	startTimeout := resolveStartTimeout()
+	log.Printf("UDP start timeout: %s (set START_TIMEOUT_SECS or lazy-tcp-proxy.start-timeout-secs label to override)", startTimeout)
+	srv := proxy.NewServer(ctx, mgr, startTime, idleTimeout, tick, startTimeout)
 
 	// Create and wire the cron scheduler (must happen before Discover so that
 	// initial targets get their schedules registered).

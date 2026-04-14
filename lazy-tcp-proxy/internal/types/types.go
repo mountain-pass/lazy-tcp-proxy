@@ -24,6 +24,7 @@ type TargetInfo struct {
 	AllowList     []net.IPNet    // empty = no restriction (all IPs allowed)
 	BlockList     []net.IPNet    // empty = no restriction (no IPs blocked)
 	IdleTimeout   *time.Duration // nil = use global default; non-nil (incl. 0) = per-container override
+	StartTimeout  *time.Duration // nil = use global default; non-nil = per-container override
 	Running       bool           // true if the target was running at time of inspection
 	WebhookURL    string         // empty = no webhook
 	Dependants    []string       // names of managed targets to start/stop alongside this one
@@ -103,6 +104,23 @@ func ParseDependants(s string) []string {
 		}
 	}
 	return names
+}
+
+// ParseStartTimeoutLabel converts a raw label value to a *time.Duration for
+// the lazy-tcp-proxy.start-timeout-secs label/annotation.
+// Returns nil if the value is absent, empty, non-numeric, or negative.
+func ParseStartTimeoutLabel(name, raw string) *time.Duration {
+	v := strings.TrimSpace(raw)
+	if v == "" {
+		return nil
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 0 {
+		log.Printf("container %s: ignoring invalid start-timeout-secs %q", name, raw)
+		return nil
+	}
+	d := time.Duration(n) * time.Second
+	return &d
 }
 
 // ParseIdleTimeoutLabel converts a raw label value to a *time.Duration.

@@ -140,14 +140,15 @@ type ProxyServer struct {
 	nameToID      map[string]string        // ContainerName → ContainerID for cascade lookup
 	pollInterval  time.Duration
 	idleTimeout   time.Duration
+	startTimeout  time.Duration
 	startTime     time.Time
 	webhookClient *http.Client
-	sched         cronScheduler   // nil if no scheduler configured
+	sched         cronScheduler      // nil if no scheduler configured
 	startGroup    singleflight.Group // deduplicates concurrent EnsureRunning calls per container
 }
 
 // NewServer creates a new ProxyServer backed by the given backend.
-func NewServer(ctx context.Context, b containerBackend, startTime time.Time, idleTimeout, pollInterval time.Duration) *ProxyServer {
+func NewServer(ctx context.Context, b containerBackend, startTime time.Time, idleTimeout, pollInterval, startTimeout time.Duration) *ProxyServer {
 	return &ProxyServer{
 		backend:       b,
 		ctx:           ctx,
@@ -155,6 +156,7 @@ func NewServer(ctx context.Context, b containerBackend, startTime time.Time, idl
 		udpTargets:    make(map[int]*udpListenerState),
 		nameToID:      make(map[string]string),
 		idleTimeout:   idleTimeout,
+		startTimeout:  startTimeout,
 		pollInterval:  pollInterval,
 		startTime:     startTime,
 		webhookClient: &http.Client{Timeout: 5 * time.Second},
@@ -406,6 +408,7 @@ func (s *ProxyServer) RegisterTarget(info types.TargetInfo) {
 			existing.info = info
 			existing.targetPort = m.TargetPort
 			existing.idleTimeout = info.IdleTimeout
+			existing.startTimeout = effectiveTimeout(info.StartTimeout, s.startTimeout)
 			existing.running = info.Running
 			existing.removed = false
 			log.Printf("proxy: updated UDP target \033[33m%s\033[0m on port %d->%d", info.ContainerName, m.ListenPort, m.TargetPort)
@@ -418,14 +421,16 @@ func (s *ProxyServer) RegisterTarget(info types.TargetInfo) {
 			continue
 		}
 		uls := &udpListenerState{
-			listenConn:  pc.(*net.UDPConn),
-			targetPort:  m.TargetPort,
-			info:        info,
-			idleTimeout: info.IdleTimeout,
-			running:     info.Running,
-			flows:       make(map[string]*udpFlow),
-			pending:     make(map[string]bool),
+			listenConn:   pc.(*net.UDPConn),
+			targetPort:   m.TargetPort,
+			info:         info,
+			idleTimeout:  info.IdleTimeout,
+			startTimeout: effectiveTimeout(info.StartTimeout, s.startTimeout),
+			running:      info.Running,
+			flows:        make(map[string]*udpFlow),
+			pending:      make(map[string]bool),
 		}
+		uls.upstreamReadyCond = sync.NewCond(&uls.mu)
 		s.udpTargets[m.ListenPort] = uls
 		log.Printf("proxy: registered target \033[33m%s\033[0m, UDP %d->%d", info.ContainerName, m.ListenPort, m.TargetPort)
 		go s.udpReadLoop(uls)
@@ -478,6 +483,7 @@ func (s *ProxyServer) RemoveTarget(containerID string) {
 func (s *ProxyServer) ContainerStopped(containerID string) {
 	s.mu.RLock()
 	var info types.TargetInfo
+	var affectedULS []*udpListenerState
 	for _, ts := range s.targets {
 		if ts.info.ContainerID == containerID {
 			ts.running = false
@@ -488,9 +494,22 @@ func (s *ProxyServer) ContainerStopped(containerID string) {
 		if uls.info.ContainerID == containerID {
 			uls.running = false
 			info = uls.info
+			affectedULS = append(affectedULS, uls)
 		}
 	}
 	s.mu.RUnlock()
+	// Reset upstream readiness state so the next cold start re-probes.
+	// If the container stopped externally while a retry loop was in progress,
+	// also wake any goroutines blocked on the shared wait.
+	for _, uls := range affectedULS {
+		uls.mu.Lock()
+		uls.upstreamReady = false
+		if uls.upstreamStarting {
+			uls.upstreamStarting = false
+			uls.upstreamReadyCond.Broadcast()
+		}
+		uls.mu.Unlock()
+	}
 	if len(info.Dependants) > 0 {
 		go s.cascadeStop(info)
 	}

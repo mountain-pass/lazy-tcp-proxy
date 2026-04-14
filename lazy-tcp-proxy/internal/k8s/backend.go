@@ -267,6 +267,7 @@ func (b *Backend) deploymentToTargetInfo(d appsv1.Deployment) (types.TargetInfo,
 	}
 
 	idleTimeout := types.ParseIdleTimeoutLabel(d.Name, ann["lazy-tcp-proxy.idle-timeout-secs"])
+	startTimeout := types.ParseStartTimeoutLabel(d.Name, ann["lazy-tcp-proxy.start-timeout-secs"])
 
 	var webhookURL string
 	if v := strings.TrimSpace(ann["lazy-tcp-proxy.webhook-url"]); v != "" {
@@ -293,6 +294,7 @@ func (b *Backend) deploymentToTargetInfo(d appsv1.Deployment) (types.TargetInfo,
 		AllowList:     allowList,
 		BlockList:     blockList,
 		IdleTimeout:   idleTimeout,
+		StartTimeout:  startTimeout,
 		Running:       d.Status.ReadyReplicas > 0,
 		WebhookURL:    webhookURL,
 		Dependants:    dependants,

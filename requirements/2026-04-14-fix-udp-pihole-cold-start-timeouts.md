@@ -2,7 +2,7 @@
 
 **Date Added**: 2026-04-14
 **Priority**: High
-**Status**: In Progress
+**Status**: Completed
 
 ## Problem Statement
 
@@ -92,27 +92,27 @@ problems occur:
 
 ## Acceptance Criteria
 
-- [ ] `START_TIMEOUT_SECS` env var is read; default is 30 s.
-- [ ] `lazy-tcp-proxy.start-timeout-secs` label overrides the global default for
+- [x] `START_TIMEOUT_SECS` env var is read; default is 30 s.
+- [x] `lazy-tcp-proxy.start-timeout-secs` label overrides the global default for
       that container.
-- [ ] While one goroutine is in the first-datagram retry loop, additional
+- [x] While one goroutine is in the first-datagram retry loop, additional
       `startUDPFlow` goroutines for the same listener block rather than
       starting their own retry loop.
-- [ ] When the upstream responds, all blocked goroutines unblock and each
+- [x] When the upstream responds, all blocked goroutines unblock and each
       sends its own first datagram directly.
-- [ ] When the start timeout exhausts: `backend.Stop()` is called, all
+- [x] When the start timeout exhausts: `backend.StopContainer()` is called, all
       blocked goroutines return early without forwarding, and neither
       `uls.flows` nor `uls.lastActive` are updated for the failed flows.
-- [ ] `uls.lastActive` is only updated after a successful first datagram
+- [x] `uls.lastActive` is only updated after a successful first datagram
       response, never on flow creation.
-- [ ] `upstreamReady` resets to `false` when the container stops, so the
+- [x] `upstreamReady` resets to `false` when the container stops, so the
       next cold start re-runs the readiness check.
-- [ ] Goroutines blocked on the wait unblock cleanly if the listener is
+- [x] Goroutines blocked on the wait unblock cleanly if the listener is
       removed while they are waiting (no goroutine leak).
-- [ ] README updated: `START_TIMEOUT_SECS` in the Environment Variables
+- [x] README updated: `START_TIMEOUT_SECS` in the Environment Variables
       table; `lazy-tcp-proxy.start-timeout-secs` in the Container Label
       Configuration table; a note in the UDP Support section.
-- [ ] Existing unit and integration tests pass.
+- [x] Existing unit and integration tests pass.
 
 ## Dependencies
 
