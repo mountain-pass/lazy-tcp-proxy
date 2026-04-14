@@ -103,8 +103,12 @@ const statusDashboardHTML = `<!DOCTYPE html>
 	  max-width: 400px;
 	  width: 100%;
 	  margin: auto;
+	  display: flex;
+	  flex-direction: column;
+	  gap: 0.75rem;
     }
-    .container-header { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
+	.flex { display: flex; align-items: center; gap: 0.5rem; }
+    .container-header { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; space-y: 1rem; flex-wrap: wrap; }
     .container-name { font-weight: 600; font-size: 1rem; }
     .status-badge {
       font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
@@ -114,7 +118,7 @@ const statusDashboardHTML = `<!DOCTYPE html>
     .status-idle { background: #713f12; color: #fbbf24; }
     .status-down { background: #7f1d1d; color: #f87171; }
     .container-id { font-size: 0.7rem; color: #475569; font-family: monospace; margin-left: auto; }
-    .ports { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+    .ports { display: flex; flex-wrap: wrap; gap: 0.5rem; justify-content: flex-end; }
     .port-entry {
       font-size: 0.78rem; background: #263044; border: 1px solid #374151;
       border-radius: 4px; padding: 2px 8px; color: #94a3b8;
@@ -168,12 +172,17 @@ const statusDashboardHTML = `<!DOCTYPE html>
           if (statusRank[s] > statusRank[best]) best = s;
         }
 
+        const portBadges = group.ports.sort((a, b) => a.listen_port - b.listen_port).map(p => {
+          return '<a class="port-entry" target="_blank" href="' + window.location.protocol + '//' + window.location.hostname + ':' + p.listen_port + '">:' + p.listen_port + ' (' + p.active_conns + ')' + '</a>';
+        }).join('');
+
         html +=
           '<div class="container-card">' +
             '<div class="container-header">' +
               '<span class="container-name">' + esc(group.name) + '</span>' +
-              '<span class="status-badge status-' + best + '">' + best + '</span>' +
+                '<span class="status-badge status-' + best + '">' + best + '</span>' +
             '</div>' +
+            '<div class="ports">' + portBadges + '</div>' +
           '</div>';
       }
       el.innerHTML = html;

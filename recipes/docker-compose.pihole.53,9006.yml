@@ -24,6 +24,6 @@ services:
       - "lazy-tcp-proxy.enabled=true"
       # Port 53 requires elevated privileges on Linux - you may need to set
       # net.ipv4.ip_unprivileged_port_start=53 or run the proxy as root
-      - "lazy-tcp-proxy.ports=53:53,9006:443"
+      - "lazy-tcp-proxy.ports=53:53,9006:8082"
       - "lazy-tcp-proxy.udp-ports=53:53"
 
