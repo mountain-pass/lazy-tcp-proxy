@@ -58,3 +58,4 @@
 | REQ-054 | Docker Compose Recipes for Popular Service Images                       | Medium | Completed   | 2026-04-08 | [2026-04-08-docker-recipes-popular-services.md](2026-04-08-docker-recipes-popular-services.md) |
 | REQ-055 | Fix UDP First Packet Drop on Container Startup                          | High   | Completed   | 2026-04-09 | [2026-04-09-fix-udp-first-packet-drop.md](2026-04-09-fix-udp-first-packet-drop.md) |
 | REQ-056 | Status Dashboard (HTML UI at /)                                         | Low    | Completed   | 2026-04-14 | [2026-04-14-status-dashboard.md](2026-04-14-status-dashboard.md) |
+| REQ-057 | Fix UDP ECONNREFUSED Retry and Clarify Internal Flow Log Messages        | High   | Completed   | 2026-04-14 | [2026-04-14-fix-udp-connrefused-retry-and-flow-logs.md](2026-04-14-fix-udp-connrefused-retry-and-flow-logs.md) |
