@@ -30,7 +30,7 @@
 | REQ-026 | Webhook Support for Container Lifecycle Events    | Medium | Completed   | 2026-04-01 | [2026-04-01-webhook-support.md](2026-04-01-webhook-support.md) |
 | REQ-027 | UDP Traffic Support                               | Medium | Completed   | 2026-04-01 | [2026-04-01-udp-traffic-support.md](2026-04-01-udp-traffic-support.md) |
 | REQ-028 | Integration Tests (TCP and UDP Proxy)             | Medium | Completed   | 2026-04-01 | [2026-04-01-integration-tests.md](2026-04-01-integration-tests.md) |
-| REQ-029 | Root Redirect to /status                          | Low    | Completed   | 2026-04-02 | [2026-04-02-root-redirect-to-status.md](2026-04-02-root-redirect-to-status.md) |
+| REQ-029 | Root Redirect to /status                          | Low    | Completed ⚠️ superseded by REQ-056 (Status Dashboard) | 2026-04-02 | [2026-04-02-root-redirect-to-status.md](2026-04-02-root-redirect-to-status.md) |
 | REQ-030 | Last Active Default & Relative Time Field         | Medium | Completed   | 2026-04-02 | [2026-04-02-last-active-relative.md](2026-04-02-last-active-relative.md) |
 | REQ-031 | GitHub Actions Go CI Workflow                     | High   | Completed   | 2026-04-02 | [2026-04-02-github-actions-go-ci.md](2026-04-02-github-actions-go-ci.md) |
 | REQ-032 | Fix golangci-lint errcheck Violations             | High   | Completed   | 2026-04-02 | [2026-04-02-fix-lint-errcheck.md](2026-04-02-fix-lint-errcheck.md) |
@@ -57,3 +57,4 @@
 | REQ-053 | Platform Integration Documentation (Podman, Unraid, TrueNAS SCALE)     | Medium | Completed   | 2026-04-08 | [2026-04-08-platform-integration-docs.md](2026-04-08-platform-integration-docs.md) |
 | REQ-054 | Docker Compose Recipes for Popular Service Images                       | Medium | Completed   | 2026-04-08 | [2026-04-08-docker-recipes-popular-services.md](2026-04-08-docker-recipes-popular-services.md) |
 | REQ-055 | Fix UDP First Packet Drop on Container Startup                          | High   | Completed   | 2026-04-09 | [2026-04-09-fix-udp-first-packet-drop.md](2026-04-09-fix-udp-first-packet-drop.md) |
+| REQ-056 | Status Dashboard (HTML UI at /)                                         | Low    | Completed   | 2026-04-14 | [2026-04-14-status-dashboard.md](2026-04-14-status-dashboard.md) |
