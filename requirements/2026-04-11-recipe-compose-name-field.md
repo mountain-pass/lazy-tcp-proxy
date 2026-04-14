@@ -27,5 +27,6 @@ This is the root cause of the pihole "network not found" error described in REQ-
 
 ## Dependencies
 
-- REQ-056 — same root cause; this is the user-facing fix, REQ-056 is the proxy-side
+- REQ-058 — same root cause; this is the user-facing fix, REQ-058 is the proxy-side
   detection and warning.
+- Renumbered from REQ-057 → REQ-059 (REQ-057 was claimed by main before merge).

@@ -2,11 +2,13 @@ package proxy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/mountain-pass/lazy-tcp-proxy/internal/types"
@@ -77,7 +79,7 @@ func (s *ProxyServer) udpReadLoop(uls *udpListenerState) {
 			}
 			uls.pending[key] = true
 			uls.mu.Unlock()
-			log.Printf("proxy: udp: new flow from \033[36m%s\033[0m to \033[33m%s\033[0m (port %d)",
+			log.Printf("proxy: udp: new internal flow attempt from \033[36m%s\033[0m to \033[33m%s\033[0m (port %d)",
 				clientAddr, uls.info.ContainerName, uls.targetPort)
 			go s.startUDPFlow(uls, clientAddr, data)
 			continue
@@ -190,7 +192,13 @@ func (s *ProxyServer) startUDPFlow(uls *udpListenerState, clientAddr *net.UDPAdd
 			uls.mu.Unlock()
 			break
 		}
-		if netErr, ok := readErr.(net.Error); ok && netErr.Timeout() {
+		isRetryable := (func() bool {
+			if netErr, ok := readErr.(net.Error); ok && netErr.Timeout() {
+				return true
+			}
+			return errors.Is(readErr, syscall.ECONNREFUSED)
+		})()
+		if isRetryable {
 			if attempt < udpFirstDatagramRetries {
 				log.Printf("proxy: udp: upstream \033[33m%s\033[0m not ready, retrying (%d/%d)…",
 					uls.info.ContainerName, attempt, udpFirstDatagramRetries)
@@ -200,7 +208,7 @@ func (s *ProxyServer) startUDPFlow(uls *udpListenerState, clientAddr *net.UDPAdd
 				uls.info.ContainerName, udpFirstDatagramRetries)
 			break
 		}
-		// Non-timeout read error (connection closed, etc.)
+		// Non-retryable read error (connection closed, etc.)
 		log.Printf("proxy: udp: upstream read error for \033[33m%s\033[0m: %v", uls.info.ContainerName, readErr)
 		break
 	}
@@ -246,7 +254,7 @@ func (s *ProxyServer) udpFlowSweeper(ctx context.Context, uls *udpListenerState,
 			uls.mu.Lock()
 			for key, flow := range uls.flows {
 				if now.Sub(flow.lastActive) > eff {
-					log.Printf("proxy: udp: flow \033[36m%s\033[0m -> \033[33m%s\033[0m expired",
+					log.Printf("proxy: udp: internal flow attempt \033[36m%s\033[0m -> \033[33m%s\033[0m expired",
 						flow.clientAddr, uls.info.ContainerName)
 					if err := flow.upstreamConn.Close(); err != nil {
 						log.Printf("proxy: udp: error closing upstream conn for flow %s: %v", flow.clientAddr, err)

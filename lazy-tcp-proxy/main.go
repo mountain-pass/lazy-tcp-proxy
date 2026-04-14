@@ -63,6 +63,133 @@ func resolveStatusPort() int {
 	return n // 0 means disabled
 }
 
+const statusDashboardHTML = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lazy TCP Proxy – Status</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: #0f1117;
+      color: #e2e8f0;
+      padding: 2rem;
+    }
+    h1 { font-size: 1.4rem; font-weight: 600; margin-bottom: 0.5rem; color: #f8fafc; }
+    #last-updated { font-size: 0.75rem; color: #64748b; margin-bottom: 1.5rem; }
+    #error { color: #f87171; margin-bottom: 1rem; font-size: 0.875rem; min-height: 1.2em; }
+    #containers { display: flex; flex-direction: column; gap: 0.75rem; }
+    .container-card {
+      background: #1e2330;
+      border: 1px solid #2d3748;
+      border-radius: 8px;
+      padding: 1rem 1.25rem;
+    }
+    .container-header { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.5rem; }
+    .container-name { font-weight: 600; font-size: 1rem; }
+    .status-badge {
+      font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
+      padding: 2px 8px; border-radius: 999px; letter-spacing: 0.05em;
+    }
+    .status-up   { background: #166534; color: #4ade80; }
+    .status-idle { background: #713f12; color: #fbbf24; }
+    .status-down { background: #7f1d1d; color: #f87171; }
+    .container-id { font-size: 0.7rem; color: #475569; font-family: monospace; margin-left: auto; }
+    .ports { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+    .port-entry {
+      font-size: 0.78rem; background: #263044; border: 1px solid #374151;
+      border-radius: 4px; padding: 2px 8px; color: #94a3b8;
+    }
+    .active-conns { color: #60a5fa; font-weight: 600; }
+    .empty { color: #475569; font-style: italic; }
+  </style>
+</head>
+<body>
+  <h1>Lazy TCP Proxy</h1>
+  <div id="last-updated">Loading…</div>
+  <div id="error"></div>
+  <div id="containers"></div>
+  <script>
+    const statusRank = { up: 3, idle: 2, down: 1 };
+
+    function statusOf(running, activeConns) {
+      if (!running) return 'down';
+      return activeConns > 0 ? 'up' : 'idle';
+    }
+
+    function esc(s) {
+      return String(s)
+        .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+        .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    function render(data) {
+      const el = document.getElementById('containers');
+      if (!data.length) {
+        el.innerHTML = '<p class="empty">No containers registered.</p>';
+        return;
+      }
+
+      // Group by container_id, preserving insertion order (already sorted by server)
+      const groups = new Map();
+      for (const snap of data) {
+        const key = snap.container_id || snap.container_name;
+        if (!groups.has(key)) {
+          groups.set(key, { name: snap.container_name, id: snap.container_id, ports: [] });
+        }
+        groups.get(key).ports.push(snap);
+      }
+
+      let html = '';
+      for (const group of groups.values()) {
+        // Overall status: best port status wins (up > idle > down)
+        let best = 'down';
+        for (const p of group.ports) {
+          const s = statusOf(p.running, p.active_conns);
+          if (statusRank[s] > statusRank[best]) best = s;
+        }
+
+        const portBadges = group.ports.map(p => {
+          const conns = p.active_conns > 0
+            ? ' <span class="active-conns">' + p.active_conns + ' conn' + (p.active_conns !== 1 ? 's' : '') + '</span>'
+            : '';
+          return '<span class="port-entry">:' + p.listen_port + ' &rarr; :' + p.target_port + conns + '</span>';
+        }).join('');
+
+        html +=
+          '<div class="container-card">' +
+            '<div class="container-header">' +
+              '<span class="container-name">' + esc(group.name) + '</span>' +
+              '<span class="status-badge status-' + best + '">' + best + '</span>' +
+              '<span class="container-id">' + esc(group.id) + '</span>' +
+            '</div>' +
+            '<div class="ports">' + portBadges + '</div>' +
+          '</div>';
+      }
+      el.innerHTML = html;
+    }
+
+    async function refresh() {
+      try {
+        const res = await fetch('/status');
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        render(await res.json());
+        document.getElementById('error').textContent = '';
+      } catch (e) {
+        document.getElementById('error').textContent = 'Failed to fetch status: ' + e.message;
+      }
+      document.getElementById('last-updated').textContent =
+        'Last updated: ' + new Date().toLocaleTimeString();
+    }
+
+    refresh();
+    setInterval(refresh, 2000);
+  </script>
+</body>
+</html>`
+
 func runStatusServer(ctx context.Context, srv *proxy.ProxyServer, port int) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
@@ -76,7 +203,12 @@ func runStatusServer(ctx context.Context, srv *proxy.ProxyServer, port int) {
 		fmt.Fprint(w, "ok") //nolint:errcheck
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "/status", http.StatusMovedPermanently)
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprint(w, statusDashboardHTML) //nolint:errcheck
 	})
 	hs := &http.Server{Addr: fmt.Sprintf(":%d", port), Handler: mux}
 	context.AfterFunc(ctx, func() {

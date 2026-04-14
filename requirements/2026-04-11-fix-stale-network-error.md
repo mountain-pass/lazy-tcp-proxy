@@ -91,6 +91,7 @@ command is given without a `-f` flag as a generic starting point.
 
 - REQ-001 (Core TCP Proxy for Docker Containers) — UX improvements to discovery and
   container-start flow.
+- Renumbered from REQ-056 → REQ-058 (REQ-056 was claimed by main before merge).
 
 ## Implementation Notes
 
