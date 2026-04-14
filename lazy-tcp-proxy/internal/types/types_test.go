@@ -174,6 +174,62 @@ func TestParseDependants_BlankTokensSkipped(t *testing.T) {
 	}
 }
 
+// ---- ParseStartTimeoutLabel ----
+
+func TestParseStartTimeoutLabel_ValidPositive(t *testing.T) {
+	got := ParseStartTimeoutLabel("svc", "30")
+	if got == nil {
+		t.Fatal("expected non-nil result for valid positive value")
+	}
+	if *got != 30*time.Second {
+		t.Errorf("got %s, want 30s", *got)
+	}
+}
+
+func TestParseStartTimeoutLabel_Zero(t *testing.T) {
+	got := ParseStartTimeoutLabel("svc", "0")
+	if got == nil {
+		t.Fatal("expected non-nil result for zero")
+	}
+	if *got != 0 {
+		t.Errorf("got %s, want 0s", *got)
+	}
+}
+
+func TestParseStartTimeoutLabel_WhitespaceAround(t *testing.T) {
+	got := ParseStartTimeoutLabel("svc", "  60  ")
+	if got == nil {
+		t.Fatal("expected non-nil result; whitespace should be trimmed")
+	}
+	if *got != 60*time.Second {
+		t.Errorf("got %s, want 60s", *got)
+	}
+}
+
+func TestParseStartTimeoutLabel_Empty(t *testing.T) {
+	if got := ParseStartTimeoutLabel("svc", ""); got != nil {
+		t.Errorf("expected nil for empty string, got %s", *got)
+	}
+}
+
+func TestParseStartTimeoutLabel_WhitespaceOnly(t *testing.T) {
+	if got := ParseStartTimeoutLabel("svc", "   "); got != nil {
+		t.Errorf("expected nil for whitespace-only, got %s", *got)
+	}
+}
+
+func TestParseStartTimeoutLabel_Negative(t *testing.T) {
+	if got := ParseStartTimeoutLabel("svc", "-5"); got != nil {
+		t.Errorf("expected nil for negative value, got %s", *got)
+	}
+}
+
+func TestParseStartTimeoutLabel_NonNumeric(t *testing.T) {
+	if got := ParseStartTimeoutLabel("svc", "abc"); got != nil {
+		t.Errorf("expected nil for non-numeric value, got %s", *got)
+	}
+}
+
 // ---- ParseIdleTimeoutLabel ----
 
 func TestParseIdleTimeoutLabel_ValidPositive(t *testing.T) {

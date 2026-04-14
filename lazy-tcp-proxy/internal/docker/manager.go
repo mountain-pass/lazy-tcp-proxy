@@ -187,6 +187,7 @@ func (m *Manager) containerToTargetInfo(ctx context.Context, containerID string)
 	}
 
 	idleTimeout := types.ParseIdleTimeoutLabel(name, inspect.Config.Labels["lazy-tcp-proxy.idle-timeout-secs"])
+	startTimeout := types.ParseStartTimeoutLabel(name, inspect.Config.Labels["lazy-tcp-proxy.start-timeout-secs"])
 
 	var webhookURL string
 	if v := strings.TrimSpace(inspect.Config.Labels["lazy-tcp-proxy.webhook-url"]); v != "" {
@@ -214,6 +215,7 @@ func (m *Manager) containerToTargetInfo(ctx context.Context, containerID string)
 		AllowList:     allowList,
 		BlockList:     blockList,
 		IdleTimeout:   idleTimeout,
+		StartTimeout:  startTimeout,
 		Running:       inspect.State.Running,
 		WebhookURL:    webhookURL,
 		Dependants:    dependants,
