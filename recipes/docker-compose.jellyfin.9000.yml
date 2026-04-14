@@ -1,3 +1,5 @@
+name: jellyfin
+
 services:
   jellyfin:
     image: jellyfin/jellyfin

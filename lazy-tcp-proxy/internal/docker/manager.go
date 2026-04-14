@@ -117,6 +117,8 @@ func (m *Manager) Discover(ctx context.Context, handler types.TargetHandler) err
 			continue
 		}
 
+		m.warnSharedDefaultNetworks(ctx, info)
+
 		joined, err := m.JoinNetworks(ctx, info.NetworkIDs)
 		if err != nil {
 			log.Printf("docker: discover: failed to join networks for \033[33m%s\033[0m: %v", info.ContainerName, err)
@@ -303,6 +305,34 @@ func (m *Manager) Shutdown(ctx context.Context) {
 	m.LeaveNetworks(ctx)
 }
 
+// warnSharedDefaultNetworks logs a warning if any of the container's networks is a
+// Docker Compose default network that the proxy is already a member of. This situation
+// means that running "docker compose down" on the proxy stack will delete the shared
+// network and leave the managed container unable to restart.
+func (m *Manager) warnSharedDefaultNetworks(ctx context.Context, info types.TargetInfo) {
+	if m.selfID == "" {
+		return
+	}
+	for _, netID := range info.NetworkIDs {
+		netInfo, err := m.cli.NetworkInspect(ctx, netID, client.NetworkInspectOptions{})
+		if err != nil {
+			continue
+		}
+		if netInfo.Network.Labels["com.docker.compose.network"] != "default" {
+			continue
+		}
+		for cid := range netInfo.Network.Containers {
+			if strings.HasPrefix(cid, m.selfID) || strings.HasPrefix(m.selfID, cid) {
+				log.Printf("docker: WARNING: container %q shares the proxy's default compose network %q.\n"+
+					"  Running \"docker compose down\" on the proxy stack will delete this network and leave %q unable to restart.\n"+
+					"  Fix: add a top-level \"name:\" field to each of your compose files to give them unique project names.",
+					info.ContainerName, netInfo.Network.Name, info.ContainerName)
+				break
+			}
+		}
+	}
+}
+
 // EnsureRunning starts the container if it is not already running.
 func (m *Manager) EnsureRunning(ctx context.Context, containerID string) error {
 	result, err := m.cli.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
@@ -317,6 +347,9 @@ func (m *Manager) EnsureRunning(ctx context.Context, containerID string) error {
 	name := strings.TrimPrefix(result.Container.Name, "/")
 	log.Printf("docker: starting container \033[33m%s\033[0m", name)
 	if _, err := m.cli.ContainerStart(ctx, containerID, client.ContainerStartOptions{}); err != nil {
+		if strings.Contains(err.Error(), "network") && strings.Contains(err.Error(), "not found") {
+			log.Printf("docker: container %q has a stale network reference; recreate the container to fix this (docker rm %s && docker compose up -d)", name, name)
+		}
 		return fmt.Errorf("starting container: %w", err)
 	}
 
@@ -447,6 +480,7 @@ func (m *Manager) WatchEvents(ctx context.Context, handler types.TargetHandler) 
 						log.Printf("docker: event: could not get target info for %s: %v", name, err)
 						continue
 					}
+					m.warnSharedDefaultNetworks(ctx, info)
 					joined, err := m.JoinNetworks(ctx, info.NetworkIDs)
 					if err != nil {
 						log.Printf("docker: event: failed to join networks: %v", err)

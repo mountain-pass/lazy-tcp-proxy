@@ -59,3 +59,5 @@
 | REQ-055 | Fix UDP First Packet Drop on Container Startup                          | High   | Completed   | 2026-04-09 | [2026-04-09-fix-udp-first-packet-drop.md](2026-04-09-fix-udp-first-packet-drop.md) |
 | REQ-056 | Status Dashboard (HTML UI at /)                                         | Low    | Completed   | 2026-04-14 | [2026-04-14-status-dashboard.md](2026-04-14-status-dashboard.md) |
 | REQ-057 | Fix UDP ECONNREFUSED Retry and Clarify Internal Flow Log Messages        | High   | Completed   | 2026-04-14 | [2026-04-14-fix-udp-connrefused-retry-and-flow-logs.md](2026-04-14-fix-udp-connrefused-retry-and-flow-logs.md) |
+| REQ-058 | Fix: Stale Docker Network Error on Container Start                      | High   | Completed   | 2026-04-11 | [2026-04-11-fix-stale-network-error.md](2026-04-11-fix-stale-network-error.md) |
+| REQ-059 | Add `name:` Field to All Recipe Compose Files                           | High   | Completed   | 2026-04-11 | [2026-04-11-recipe-compose-name-field.md](2026-04-11-recipe-compose-name-field.md) |

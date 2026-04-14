@@ -1,3 +1,5 @@
+name: samba
+
 services:
   samba:
     image: dperson/samba

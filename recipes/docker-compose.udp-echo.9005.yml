@@ -1,3 +1,5 @@
+name: udp-echo
+
 services:
   # echo "hello" | nc -u localhost 9005
   udp-echo:

@@ -1,3 +1,5 @@
+name: verdaccio
+
 services:
   verdaccio:
     image: verdaccio/verdaccio

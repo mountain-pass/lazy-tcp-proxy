@@ -1,3 +1,5 @@
+name: mariadb
+
 services:
   mariadb:
     image: mariadb:lts

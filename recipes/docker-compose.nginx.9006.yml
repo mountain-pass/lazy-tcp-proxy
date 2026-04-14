@@ -1,3 +1,5 @@
+name: nginx
+
 services:
   nginx:
     image: nginx:stable

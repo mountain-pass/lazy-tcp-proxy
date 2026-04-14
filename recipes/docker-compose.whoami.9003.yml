@@ -1,3 +1,5 @@
+name: whoami
+
 services:
   # Note: uses a HTTP keep alive (server side)
   whoami:

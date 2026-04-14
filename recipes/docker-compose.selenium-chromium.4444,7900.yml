@@ -1,3 +1,5 @@
+name: selenium-chromium
+
 services:
   selenium:
     container_name: selenium-chromium

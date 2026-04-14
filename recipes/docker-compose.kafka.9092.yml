@@ -1,3 +1,5 @@
+name: kafka
+
 services:
   kafka:
     image: bitnami/kafka

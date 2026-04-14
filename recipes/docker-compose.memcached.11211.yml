@@ -1,3 +1,5 @@
+name: memcached
+
 services:
   memcached:
     image: memcached:alpine

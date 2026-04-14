@@ -1,3 +1,5 @@
+name: minecraft
+
 services:
   minecraft:
     image: itzg/minecraft-server
