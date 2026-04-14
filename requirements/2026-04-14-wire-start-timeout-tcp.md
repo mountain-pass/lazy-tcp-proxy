@@ -2,7 +2,7 @@
 
 **Date Added**: 2026-04-14
 **Priority**: Medium
-**Status**: In Progress
+**Status**: Completed
 
 ## Problem Statement
 
@@ -37,12 +37,12 @@ budget unconfigurable and inconsistent with UDP.
 
 ## Acceptance Criteria
 
-- [ ] `targetState` has a `startTimeout time.Duration` field.
-- [ ] TCP dial retry count is derived from `ts.startTimeout` (not the removed
+- [x] `targetState` has a `startTimeout time.Duration` field.
+- [x] TCP dial retry count is derived from `ts.startTimeout` (not the removed
       `dialRetries` constant).
-- [ ] A container with `lazy-tcp-proxy.start-timeout-secs=10` uses ~10 s of TCP
+- [x] A container with `lazy-tcp-proxy.start-timeout-secs=10` uses ~10 s of TCP
       dial retries (10 attempts × 1 s).
-- [ ] Existing unit and integration tests pass.
+- [x] Existing unit and integration tests pass.
 
 ## Dependencies
 
