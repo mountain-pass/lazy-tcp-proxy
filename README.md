@@ -61,6 +61,7 @@ Add these labels to any container you want proxied/managed:
 | `lazy-tcp-proxy.allow-list` | No | Comma-separated IPs/CIDRs. If set, only matching source addresses are forwarded; all others are silently dropped |
 | `lazy-tcp-proxy.block-list` | No | Comma-separated IPs/CIDRs. If set, matching source addresses are silently dropped; all others are forwarded |
 | `lazy-tcp-proxy.idle-timeout-secs` | No | Override the global `IDLE_TIMEOUT_SECS` for this container only (seconds). `0` = stop immediately when the last connection closes |
+| `lazy-tcp-proxy.start-timeout` | No | Override the global `START_TIMEOUT_SECS` for this container only (seconds). How long to wait for the upstream to respond to the first UDP datagram after a cold start before stopping the container and giving up |
 | `lazy-tcp-proxy.webhook-url` | No | HTTP(S) URL to POST lifecycle events to (see [Webhooks](#webhooks)) |
 | `lazy-tcp-proxy.dependants` | No | Comma-separated names of other managed containers/deployments that should start and stop alongside this one (see [Dependency Cascade](#dependency-cascade)) |
 | `lazy-tcp-proxy.cron-start` | No | 5-field cron expression — start the container/deployment on this schedule (see [Cron Scheduling](#cron-scheduling)) |
@@ -84,12 +85,13 @@ labels:
 
 ## Environment Variables
 
-| Variable            | Description                                                        | Default                   |
-|---------------------|--------------------------------------------------------------------|---------------------------|
-| `IDLE_TIMEOUT_SECS` | How long (in seconds) a container must be idle before being stopped. `0` = stop immediately once all connections close | 120                       |
-| `POLL_INTERVAL_SECS`| How often (in seconds) to check for idle containers                | 15                        |
-| `DOCKER_SOCK`       | Path to Docker socket                                              | `/var/run/docker.sock`    |
-| `STATUS_PORT`       | Port for the HTTP status server; set to `0` to disable            | 8080                      |
+| Variable              | Description                                                        | Default                   |
+|-----------------------|--------------------------------------------------------------------|---------------------------|
+| `IDLE_TIMEOUT_SECS`   | How long (in seconds) a container must be idle before being stopped. `0` = stop immediately once all connections close | 120  |
+| `START_TIMEOUT_SECS`  | How long (in seconds) to wait for a UDP upstream to respond to the first datagram after a cold start. If the timeout is reached the container is stopped and all pending flows are dropped. Override per-container with the `lazy-tcp-proxy.start-timeout` label | 30 |
+| `POLL_INTERVAL_SECS`  | How often (in seconds) to check for idle containers                | 15                        |
+| `DOCKER_SOCK`         | Path to Docker socket                                              | `/var/run/docker.sock`    |
+| `STATUS_PORT`         | Port for the HTTP status server; set to `0` to disable            | 8080                      |
 
 All are optional; defaults are safe for most setups.
 
@@ -166,6 +168,32 @@ labels:
 - Allow-list and block-list labels apply to UDP traffic — datagrams from blocked addresses are silently dropped.
 
 > **Note:** UDP is connectionless. The proxy uses one upstream socket per client flow, which suits the low-concurrency, lazy-start use case this proxy is designed for.
+
+**Cold-start behaviour for slow UDP upstreams (e.g. Pi-hole):**
+
+Some UDP upstreams (such as Pi-hole's DNS daemon) take several seconds to be
+ready to handle datagrams after their container starts. The proxy handles this
+with a shared readiness wait:
+
+- When the first datagram arrives and the container is cold-starting, the
+  proxy retries the datagram every 500 ms up to the `START_TIMEOUT_SECS`
+  budget (default 30 s).
+- Any additional datagrams that arrive from *other* clients while the retry
+  loop is in progress are held and forwarded as soon as the upstream responds
+  — they do **not** each start their own retry loop.
+- If the upstream does not respond within `START_TIMEOUT_SECS`, the container
+  is stopped cleanly and all pending datagrams are dropped. The next incoming
+  datagram will trigger a fresh cold start.
+
+Override the budget for a specific container with the
+`lazy-tcp-proxy.start-timeout` label:
+
+```yaml
+labels:
+  - "lazy-tcp-proxy.enabled=true"
+  - "lazy-tcp-proxy.udp-ports=53:53"
+  - "lazy-tcp-proxy.start-timeout=30"   # seconds; default is START_TIMEOUT_SECS (30)
+```
 
 ---
 
