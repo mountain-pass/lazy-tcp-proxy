@@ -66,6 +66,7 @@ Add these labels to any container you want proxied/managed:
 | `lazy-tcp-proxy.dependants` | No | Comma-separated names of other managed containers/deployments that should start and stop alongside this one (see [Dependency Cascade](#dependency-cascade)) |
 | `lazy-tcp-proxy.cron-start` | No | 5-field cron expression — start the container/deployment on this schedule (see [Cron Scheduling](#cron-scheduling)) |
 | `lazy-tcp-proxy.cron-stop` | No | 5-field cron expression — stop the container/deployment on this schedule (see [Cron Scheduling](#cron-scheduling)) |
+| `lazy-tcp-proxy.http-healthcheck` | No | URL to poll after a cold start — proxy waits for a 2xx response before forwarding TCP traffic. Supports `${container}` placeholder (see [HTTP Health Check](#http-health-check)) |
 
 \* At least one of `lazy-tcp-proxy.ports` or `lazy-tcp-proxy.udp-ports` must be set. A container may use TCP only, UDP only, or both.
 
@@ -88,7 +89,7 @@ labels:
 | Variable              | Description                                                        | Default                   |
 |-----------------------|--------------------------------------------------------------------|---------------------------|
 | `IDLE_TIMEOUT_SECS`   | How long (in seconds) a container must be idle before being stopped. `0` = stop immediately once all connections close | 120  |
-| `START_TIMEOUT_SECS`  | How long (in seconds) to wait for a UDP upstream to respond to the first datagram after a cold start. If the timeout is reached the container is stopped and all pending flows are dropped. Override per-container with the `lazy-tcp-proxy.start-timeout-secs` label | 30 |
+| `START_TIMEOUT_SECS`  | How long (in seconds) to wait for an upstream to be ready after a cold start — applies to both the UDP datagram readiness probe and the HTTP health check (`lazy-tcp-proxy.http-healthcheck`). If the timeout is reached the connection/flow is dropped. Override per-container with the `lazy-tcp-proxy.start-timeout-secs` label | 30 |
 | `POLL_INTERVAL_SECS`  | How often (in seconds) to check for idle containers                | 15                        |
 | `DOCKER_SOCK`         | Path to Docker socket                                              | `/var/run/docker.sock`    |
 | `STATUS_PORT`         | Port for the HTTP status server; set to `0` to disable            | 8080                      |
@@ -194,6 +195,50 @@ labels:
   - "lazy-tcp-proxy.udp-ports=53:53"
   - "lazy-tcp-proxy.start-timeout=30"   # seconds; default is START_TIMEOUT_SECS (30)
 ```
+
+---
+
+## HTTP Health Check
+
+Some containers bind their service port during startup but aren't ready to handle requests yet (e.g. a database finishing migrations, or an app server loading configuration). The `lazy-tcp-proxy.http-healthcheck` label lets you declare a URL that the proxy will poll after starting the container, before forwarding any TCP traffic.
+
+```yaml
+labels:
+  - "lazy-tcp-proxy.enabled=true"
+  - "lazy-tcp-proxy.ports=3306:3306"
+  - "lazy-tcp-proxy.http-healthcheck=http://${container}:8080/health"
+```
+
+**How it works:**
+
+- After `EnsureRunning` succeeds, the proxy polls the URL with `HTTP GET` every second.
+- Any **2xx** response is treated as ready — proxying begins immediately.
+- Non-2xx responses (e.g. `503 Service Unavailable`) and connection errors are both treated as "not yet ready" and retried.
+- If no 2xx is received within `START_TIMEOUT_SECS` (default 30 s), the client connection is dropped and an error is logged. The next incoming connection will trigger a fresh cold-start attempt.
+- When the label is absent, existing TCP behaviour is unchanged (the dial-retry loop handles port-level readiness).
+
+**`${container}` placeholder:**
+
+To avoid hardcoding internal hostnames, use `${container}` in the URL — it is substituted with the container's actual name at startup:
+
+```yaml
+# Both of these are equivalent for a container named "my-app":
+lazy-tcp-proxy.http-healthcheck: "http://my-app:8080/health"
+lazy-tcp-proxy.http-healthcheck: "http://${container}:8080/health"
+```
+
+The placeholder works because the proxy shares a Docker network with the managed container and can reach it by name.
+
+**Kubernetes annotation:**
+
+```yaml
+annotations:
+  lazy-tcp-proxy.enabled: "true"
+  lazy-tcp-proxy.ports: "3306:3306"
+  lazy-tcp-proxy.http-healthcheck: "http://${container}:8080/health"
+```
+
+> **Note:** The HTTP health check applies to TCP connections only. UDP already has a protocol-native readiness probe (it retries the first datagram until the upstream responds).
 
 ---
 
