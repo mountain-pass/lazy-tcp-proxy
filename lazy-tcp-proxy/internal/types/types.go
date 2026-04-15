@@ -3,6 +3,7 @@ package types
 import (
 	"log"
 	"net"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -28,8 +29,9 @@ type TargetInfo struct {
 	Running       bool           // true if the target was running at time of inspection
 	WebhookURL    string         // empty = no webhook
 	Dependants    []string       // names of managed targets to start/stop alongside this one
-	CronStart     string         // 5-field cron expression; "" = not scheduled
-	CronStop      string         // 5-field cron expression; "" = not scheduled
+	CronStart       string         // 5-field cron expression; "" = not scheduled
+	CronStop        string         // 5-field cron expression; "" = not scheduled
+	HTTPHealthCheck string         // URL to poll for readiness; "" = disabled
 }
 
 // TargetHandler is implemented by the proxy server to receive target updates.
@@ -138,4 +140,20 @@ func ParseIdleTimeoutLabel(name, raw string) *time.Duration {
 	}
 	d := time.Duration(n) * time.Second
 	return &d
+}
+
+// ParseHTTPHealthCheckLabel validates and returns the http-healthcheck URL,
+// substituting ${container} with the actual container name.
+// Returns "" if the value is absent, empty, or not a valid HTTP/HTTPS URL.
+func ParseHTTPHealthCheckLabel(containerName, raw string) string {
+	v := strings.TrimSpace(raw)
+	if v == "" {
+		return ""
+	}
+	v = strings.ReplaceAll(v, "${container}", containerName)
+	if _, err := url.ParseRequestURI(v); err != nil {
+		log.Printf("container %s: ignoring invalid http-healthcheck URL %q: %v", containerName, v, err)
+		return ""
+	}
+	return v
 }

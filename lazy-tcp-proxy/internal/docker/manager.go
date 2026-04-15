@@ -206,21 +206,24 @@ func (m *Manager) containerToTargetInfo(ctx context.Context, containerID string)
 	cronStart := parseCronLabel(name, "lazy-tcp-proxy.cron-start", inspect.Config.Labels["lazy-tcp-proxy.cron-start"])
 	cronStop := parseCronLabel(name, "lazy-tcp-proxy.cron-stop", inspect.Config.Labels["lazy-tcp-proxy.cron-stop"])
 
+	httpHealthCheck := types.ParseHTTPHealthCheckLabel(name, inspect.Config.Labels["lazy-tcp-proxy.http-healthcheck"])
+
 	return types.TargetInfo{
-		ContainerID:   containerID,
-		ContainerName: name,
-		Ports:         ports,
-		UDPPorts:      udpPorts,
-		NetworkIDs:    networkIDs,
-		AllowList:     allowList,
-		BlockList:     blockList,
-		IdleTimeout:   idleTimeout,
-		StartTimeout:  startTimeout,
-		Running:       inspect.State.Running,
-		WebhookURL:    webhookURL,
-		Dependants:    dependants,
-		CronStart:     cronStart,
-		CronStop:      cronStop,
+		ContainerID:     containerID,
+		ContainerName:   name,
+		Ports:           ports,
+		UDPPorts:        udpPorts,
+		NetworkIDs:      networkIDs,
+		AllowList:       allowList,
+		BlockList:       blockList,
+		IdleTimeout:     idleTimeout,
+		StartTimeout:    startTimeout,
+		Running:         inspect.State.Running,
+		WebhookURL:      webhookURL,
+		Dependants:      dependants,
+		CronStart:       cronStart,
+		CronStop:        cronStop,
+		HTTPHealthCheck: httpHealthCheck,
 	}, nil
 }
 

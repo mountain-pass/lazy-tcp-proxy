@@ -64,3 +64,4 @@
 | REQ-060 | Fix CVE-2026-32283: Upgrade Go Base Image to 1.25.9                     | High   | Completed   | 2026-04-14 | [2026-04-14-fix-cve-2026-32283-golang-1.25.9.md](2026-04-14-fix-cve-2026-32283-golang-1.25.9.md) |
 | REQ-061 | Fix UDP Cold-Start Timeouts for Slow-Starting Upstreams (e.g. Pi-hole)  | High   | Completed   | 2026-04-14 | [2026-04-14-fix-udp-pihole-cold-start-timeouts.md](2026-04-14-fix-udp-pihole-cold-start-timeouts.md) |
 | REQ-062 | Wire START_TIMEOUT_SECS to TCP Dial Retry Loop                           | Medium | Completed   | 2026-04-14 | [2026-04-14-wire-start-timeout-tcp.md](2026-04-14-wire-start-timeout-tcp.md) |
+| REQ-063 | HTTP Health Check Label for Container Readiness                          | Medium | Completed   | 2026-04-14 | [2026-04-14-http-health-check.md](2026-04-14-http-health-check.md) |

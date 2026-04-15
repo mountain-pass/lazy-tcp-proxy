@@ -285,3 +285,44 @@ func TestParseIdleTimeoutLabel_NonNumeric(t *testing.T) {
 		t.Errorf("expected nil for non-numeric value, got %s", *got)
 	}
 }
+
+// ---- ParseHTTPHealthCheckLabel ----
+
+func TestParseHTTPHealthCheckLabel_ValidURL(t *testing.T) {
+	got := ParseHTTPHealthCheckLabel("myapp", "http://myapp:8080/health")
+	if got != "http://myapp:8080/health" {
+		t.Errorf("got %q, want %q", got, "http://myapp:8080/health")
+	}
+}
+
+func TestParseHTTPHealthCheckLabel_Placeholder(t *testing.T) {
+	got := ParseHTTPHealthCheckLabel("myapp", "http://${container}:8080/health")
+	if got != "http://myapp:8080/health" {
+		t.Errorf("got %q, want %q", got, "http://myapp:8080/health")
+	}
+}
+
+func TestParseHTTPHealthCheckLabel_PlaceholderHTTPS(t *testing.T) {
+	got := ParseHTTPHealthCheckLabel("svc", "https://${container}:443/ready")
+	if got != "https://svc:443/ready" {
+		t.Errorf("got %q, want %q", got, "https://svc:443/ready")
+	}
+}
+
+func TestParseHTTPHealthCheckLabel_Empty(t *testing.T) {
+	if got := ParseHTTPHealthCheckLabel("myapp", ""); got != "" {
+		t.Errorf("expected empty string for empty label, got %q", got)
+	}
+}
+
+func TestParseHTTPHealthCheckLabel_WhitespaceOnly(t *testing.T) {
+	if got := ParseHTTPHealthCheckLabel("myapp", "   "); got != "" {
+		t.Errorf("expected empty string for whitespace-only label, got %q", got)
+	}
+}
+
+func TestParseHTTPHealthCheckLabel_InvalidURL(t *testing.T) {
+	if got := ParseHTTPHealthCheckLabel("myapp", "not-a-url"); got != "" {
+		t.Errorf("expected empty string for invalid URL, got %q", got)
+	}
+}

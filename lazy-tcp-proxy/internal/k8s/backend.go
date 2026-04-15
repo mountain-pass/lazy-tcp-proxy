@@ -286,20 +286,23 @@ func (b *Backend) deploymentToTargetInfo(d appsv1.Deployment) (types.TargetInfo,
 	cronStart := parseCronAnnotation(d.Name, "lazy-tcp-proxy.cron-start", ann["lazy-tcp-proxy.cron-start"])
 	cronStop := parseCronAnnotation(d.Name, "lazy-tcp-proxy.cron-stop", ann["lazy-tcp-proxy.cron-stop"])
 
+	httpHealthCheck := types.ParseHTTPHealthCheckLabel(d.Name, ann["lazy-tcp-proxy.http-healthcheck"])
+
 	return types.TargetInfo{
-		ContainerID:   d.Namespace + "/" + d.Name,
-		ContainerName: d.Name,
-		Ports:         ports,
-		UDPPorts:      udpPorts,
-		AllowList:     allowList,
-		BlockList:     blockList,
-		IdleTimeout:   idleTimeout,
-		StartTimeout:  startTimeout,
-		Running:       d.Status.ReadyReplicas > 0,
-		WebhookURL:    webhookURL,
-		Dependants:    dependants,
-		CronStart:     cronStart,
-		CronStop:      cronStop,
+		ContainerID:     d.Namespace + "/" + d.Name,
+		ContainerName:   d.Name,
+		Ports:           ports,
+		UDPPorts:        udpPorts,
+		AllowList:       allowList,
+		BlockList:       blockList,
+		IdleTimeout:     idleTimeout,
+		StartTimeout:    startTimeout,
+		Running:         d.Status.ReadyReplicas > 0,
+		WebhookURL:      webhookURL,
+		Dependants:      dependants,
+		CronStart:       cronStart,
+		CronStop:        cronStop,
+		HTTPHealthCheck: httpHealthCheck,
 	}, nil
 }
 

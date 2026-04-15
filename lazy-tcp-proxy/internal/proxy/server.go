@@ -78,15 +78,16 @@ var copyBufPool = sync.Pool{
 
 // targetState holds runtime state for a single listen-port→container-port mapping.
 type targetState struct {
-	info         types.TargetInfo
-	targetPort   int
-	listener     net.Listener
-	lastActive   time.Time
-	activeConns  atomic.Int32
-	idleTimeout  *time.Duration // nil = use server default
-	startTimeout time.Duration  // how long to retry dialing the upstream on cold start
-	running      bool
-	removed      bool
+	info            types.TargetInfo
+	targetPort      int
+	listener        net.Listener
+	lastActive      time.Time
+	activeConns     atomic.Int32
+	idleTimeout     *time.Duration // nil = use server default
+	startTimeout    time.Duration  // how long to retry dialing the upstream on cold start
+	httpHealthCheck string         // URL to poll for readiness; "" = disabled
+	running         bool
+	removed         bool
 }
 
 // webhookPayload is the JSON body sent to a container's webhook URL.
@@ -378,6 +379,7 @@ func (s *ProxyServer) RegisterTarget(info types.TargetInfo) {
 			existing.targetPort = m.TargetPort
 			existing.idleTimeout = info.IdleTimeout
 			existing.startTimeout = effectiveTimeout(info.StartTimeout, s.startTimeout)
+			existing.httpHealthCheck = info.HTTPHealthCheck
 			existing.running = info.Running
 			existing.removed = false
 			log.Printf("proxy: updated TCP target \033[33m%s\033[0m on port %d->%d", info.ContainerName, m.ListenPort, m.TargetPort)
@@ -391,13 +393,14 @@ func (s *ProxyServer) RegisterTarget(info types.TargetInfo) {
 		}
 
 		ts := &targetState{
-			info:         info,
-			targetPort:   m.TargetPort,
-			listener:     ln,
-			lastActive:   time.Time{}, // zero — immediately idle
-			idleTimeout:  info.IdleTimeout,
-			startTimeout: effectiveTimeout(info.StartTimeout, s.startTimeout),
-			running:      info.Running,
+			info:            info,
+			targetPort:      m.TargetPort,
+			listener:        ln,
+			lastActive:      time.Time{}, // zero — immediately idle
+			idleTimeout:     info.IdleTimeout,
+			startTimeout:    effectiveTimeout(info.StartTimeout, s.startTimeout),
+			httpHealthCheck: info.HTTPHealthCheck,
+			running:         info.Running,
 		}
 		s.targets[m.ListenPort] = ts
 		log.Printf("proxy: registered target \033[33m%s\033[0m, TCP %d->%d", info.ContainerName, m.ListenPort, m.TargetPort)
@@ -667,6 +670,38 @@ func ipBlocked(remoteAddr string, info types.TargetInfo) bool {
 	return false
 }
 
+// waitForHTTPReady polls url with HTTP GET every dialInterval until a 2xx
+// response is received or the timeout is exceeded. Returns nil on success.
+func (s *ProxyServer) waitForHTTPReady(ctx context.Context, url, name string, timeout time.Duration) error {
+	retries := int((timeout + dialInterval - 1) / dialInterval)
+	if retries < 1 {
+		retries = 1
+	}
+	for attempt := 1; attempt <= retries; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return fmt.Errorf("building http-healthcheck request: %w", err)
+		}
+		resp, err := s.webhookClient.Do(req)
+		if err == nil {
+			resp.Body.Close() //nolint:errcheck
+			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+				log.Printf("proxy: http-healthcheck: \033[33m%s\033[0m ready (%d)", name, resp.StatusCode)
+				return nil
+			}
+			log.Printf("proxy: http-healthcheck: attempt %d: \033[33m%s\033[0m → %d", attempt, name, resp.StatusCode)
+		} else {
+			log.Printf("proxy: http-healthcheck: attempt %d: \033[33m%s\033[0m → %v", attempt, name, err)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(dialInterval):
+		}
+	}
+	return fmt.Errorf("upstream \033[33m%s\033[0m not ready after %s", name, timeout)
+}
+
 // acceptLoop runs in a goroutine for each target listener.
 func (s *ProxyServer) acceptLoop(ts *targetState) {
 	for {
@@ -733,6 +768,13 @@ func (s *ProxyServer) handleConn(conn net.Conn, ts *targetState) {
 	}
 	if ts.info.WebhookURL != "" {
 		go s.fireWebhook(ts.info.WebhookURL, "container_started", ts.info.ContainerID, ts.info.ContainerName, "", "", 0)
+	}
+
+	if ts.httpHealthCheck != "" {
+		if err := s.waitForHTTPReady(ctx, ts.httpHealthCheck, ts.info.ContainerName, ts.startTimeout); err != nil {
+			log.Printf("proxy: http-healthcheck: %v; dropping connection from \033[36m%s\033[0m", err, conn.RemoteAddr())
+			return
+		}
 	}
 
 	// Determine preferred network hint (first network ID in list; unused in k8s mode)

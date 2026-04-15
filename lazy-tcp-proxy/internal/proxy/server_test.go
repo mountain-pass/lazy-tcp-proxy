@@ -3,6 +3,8 @@ package proxy
 import (
 	"context"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -573,6 +575,12 @@ func newTestServerWithStartStopper(startFn, stopFn func(id string)) *ProxyServer
 	return s
 }
 
+func newTestServerWithHTTPClient(client *http.Client) *ProxyServer {
+	s := newTestServer()
+	s.webhookClient = client
+	return s
+}
+
 // ---- cascade ----
 
 // populateCascadeTargets sets up hub→chrome in s.targets and s.nameToID directly,
@@ -787,6 +795,89 @@ func mustParseNets(entries ...string) []net.IPNet {
 		out = append(out, net.IPNet{IP: ip, Mask: net.CIDRMask(bits, bits)})
 	}
 	return out
+}
+
+// ---- waitForHTTPReady ----
+
+func TestWaitForHTTPReady_Immediate200(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	s := newTestServerWithHTTPClient(srv.Client())
+	err := s.waitForHTTPReady(context.Background(), srv.URL+"/health", "svc", 5*time.Second)
+	if err != nil {
+		t.Errorf("expected nil error, got %v", err)
+	}
+}
+
+func TestWaitForHTTPReady_503ThenOK(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) < 3 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+		} else {
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	defer srv.Close()
+
+	s := newTestServerWithHTTPClient(srv.Client())
+	err := s.waitForHTTPReady(context.Background(), srv.URL+"/health", "svc", 10*time.Second)
+	if err != nil {
+		t.Errorf("expected nil error after 503→503→200, got %v", err)
+	}
+	if got := calls.Load(); got != 3 {
+		t.Errorf("expected 3 attempts, got %d", got)
+	}
+}
+
+func TestWaitForHTTPReady_Timeout(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+
+	s := newTestServerWithHTTPClient(srv.Client())
+	// 2-second budget with dialInterval=1s → at most 2 attempts before timeout error
+	err := s.waitForHTTPReady(context.Background(), srv.URL+"/health", "svc", 2*time.Second)
+	if err == nil {
+		t.Error("expected error when server never returns 2xx")
+	}
+}
+
+func TestWaitForHTTPReady_CtxCancelled(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel immediately
+
+	s := newTestServerWithHTTPClient(srv.Client())
+	err := s.waitForHTTPReady(ctx, srv.URL+"/health", "svc", 30*time.Second)
+	if err == nil {
+		t.Error("expected error when context is cancelled")
+	}
+}
+
+func TestWaitForHTTPReady_2xxVariants(t *testing.T) {
+	for _, code := range []int{200, 201, 204, 299} {
+		code := code
+		t.Run(http.StatusText(code), func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(code)
+			}))
+			defer srv.Close()
+
+			s := newTestServerWithHTTPClient(srv.Client())
+			if err := s.waitForHTTPReady(context.Background(), srv.URL+"/health", "svc", 5*time.Second); err != nil {
+				t.Errorf("status %d should be treated as ready, got error: %v", code, err)
+			}
+		})
+	}
 }
 
 // ---- singleflight deduplication ----
