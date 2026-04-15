@@ -207,6 +207,24 @@ func (m *Manager) containerToTargetInfo(ctx context.Context, containerID string)
 	cronStop := parseCronLabel(name, "lazy-tcp-proxy.cron-stop", inspect.Config.Labels["lazy-tcp-proxy.cron-stop"])
 
 	httpHealthCheck := types.ParseHTTPHealthCheckLabel(name, inspect.Config.Labels["lazy-tcp-proxy.http-healthcheck"])
+	if httpHealthCheck != "" {
+		// Log the configured URL, substituting ${container} with the container's
+		// current IP address (best effort — may be empty if container is stopped).
+		var ip string
+		for _, ep := range inspect.NetworkSettings.Networks {
+			if ep.IPAddress.IsValid() {
+				ip = ep.IPAddress.String()
+				break
+			}
+		}
+		var displayURL string
+		if ip != "" {
+			displayURL = strings.ReplaceAll(httpHealthCheck, "${container}", ip)
+		} else {
+			displayURL = httpHealthCheck // show template when IP not yet assigned
+		}
+		log.Printf("%s: http-healthcheck URL configured %q", name, displayURL)
+	}
 
 	hasHealthCheck := inspect.State.Health != nil &&
 		inspect.State.Health.Status != "" &&

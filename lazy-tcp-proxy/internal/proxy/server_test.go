@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -531,8 +532,10 @@ func TestCheckInactivity_TCPIdleButUDPActiveDoesNotStop(t *testing.T) {
 
 // mockBackend satisfies containerBackend for unit tests.
 type mockBackend struct {
-	stopFunc  func(containerID string)
-	startFunc func(containerID string)
+	stopFunc     func(containerID string)
+	startFunc    func(containerID string)
+	upstreamHost string // returned by GetUpstreamHost; "" simulates unresolvable
+	upstreamErr  error  // returned by GetUpstreamHost when non-nil
 }
 
 func (m *mockBackend) EnsureRunning(_ context.Context, id string) error {
@@ -542,7 +545,7 @@ func (m *mockBackend) EnsureRunning(_ context.Context, id string) error {
 	return nil
 }
 func (m *mockBackend) GetUpstreamHost(_ context.Context, _, _ string) (string, error) {
-	return "", nil
+	return m.upstreamHost, m.upstreamErr
 }
 func (m *mockBackend) StopContainer(_ context.Context, containerID, _ string) error {
 	if m.stopFunc != nil {
@@ -880,6 +883,51 @@ func TestWaitForHTTPReady_2xxVariants(t *testing.T) {
 				t.Errorf("status %d should be treated as ready, got error: %v", code, err)
 			}
 		})
+	}
+}
+
+// ---- resolveHealthURL ----
+
+func TestResolveHealthURL_NoPlaceholder(t *testing.T) {
+	s := newTestServer()
+	s.backend = &mockBackend{upstreamHost: "172.17.0.3"}
+	got, err := s.resolveHealthURL(context.Background(), "http://myapp:8080/health", "ctr-1", "myapp", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "http://myapp:8080/health" {
+		t.Errorf("got %q, want URL unchanged when no placeholder", "http://myapp:8080/health")
+	}
+}
+
+func TestResolveHealthURL_PlaceholderReplacedWithIP(t *testing.T) {
+	s := newTestServer()
+	s.backend = &mockBackend{upstreamHost: "172.17.0.3"}
+	got, err := s.resolveHealthURL(context.Background(), "http://${container}:8080/health", "ctr-1", "myapp", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := "http://172.17.0.3:8080/health"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestResolveHealthURL_GetUpstreamHostError(t *testing.T) {
+	s := newTestServer()
+	s.backend = &mockBackend{upstreamErr: fmt.Errorf("no network")}
+	_, err := s.resolveHealthURL(context.Background(), "http://${container}:8080/health", "ctr-1", "myapp", "")
+	if err == nil {
+		t.Error("expected error when GetUpstreamHost fails")
+	}
+}
+
+func TestResolveHealthURL_GetUpstreamHostEmptyHost(t *testing.T) {
+	s := newTestServer()
+	s.backend = &mockBackend{upstreamHost: "", upstreamErr: nil}
+	_, err := s.resolveHealthURL(context.Background(), "http://${container}:8080/health", "ctr-1", "myapp", "")
+	if err == nil {
+		t.Error("expected error when GetUpstreamHost returns empty host")
 	}
 }
 

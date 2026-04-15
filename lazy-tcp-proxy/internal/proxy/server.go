@@ -675,6 +675,25 @@ func ipBlocked(remoteAddr string, info types.TargetInfo) bool {
 	return false
 }
 
+// resolveHealthURL substitutes ${container} in the health-check URL template
+// with the upstream IP/host returned by GetUpstreamHost. Returns the resolved
+// URL and nil on success. If ${container} is present but the IP cannot be
+// determined, returns ("", error) so the caller can skip the health check.
+// URLs without ${container} are returned unchanged.
+func (s *ProxyServer) resolveHealthURL(ctx context.Context, rawURL, containerID, containerName, hint string) (string, error) {
+	if !strings.Contains(rawURL, "${container}") {
+		return rawURL, nil
+	}
+	host, err := s.backend.GetUpstreamHost(ctx, containerID, hint)
+	if err != nil {
+		return "", fmt.Errorf("cannot resolve IP for \033[33m%s\033[0m: %w", containerName, err)
+	}
+	if host == "" {
+		return "", fmt.Errorf("cannot resolve IP for \033[33m%s\033[0m: no address available", containerName)
+	}
+	return strings.ReplaceAll(rawURL, "${container}", host), nil
+}
+
 // waitForHTTPReady polls url with HTTP GET every dialInterval until a 2xx
 // response is received or the timeout is exceeded. Returns nil on success.
 func (s *ProxyServer) waitForHTTPReady(ctx context.Context, url, name string, timeout time.Duration) error {
@@ -782,18 +801,10 @@ func (s *ProxyServer) handleConn(conn net.Conn, ts *targetState) {
 	}
 
 	if ts.httpHealthCheck != "" {
-		healthURL := ts.httpHealthCheck
-		if strings.Contains(healthURL, "${container}") {
-			// Resolve the upstream host (IP or service DNS name) so the health
-			// check reaches the same target as the TCP dial.
-			host, err := s.backend.GetUpstreamHost(ctx, ts.info.ContainerID, hint)
-			if err != nil {
-				// Fall back to the container name (Docker internal DNS).
-				host = ts.info.ContainerName
-			}
-			healthURL = strings.ReplaceAll(healthURL, "${container}", host)
-		}
-		if err := s.waitForHTTPReady(ctx, healthURL, ts.info.ContainerName, ts.startTimeout); err != nil {
+		healthURL, err := s.resolveHealthURL(ctx, ts.httpHealthCheck, ts.info.ContainerID, ts.info.ContainerName, hint)
+		if err != nil {
+			log.Printf("proxy: http-healthcheck: %v; skipping health check", err)
+		} else if err := s.waitForHTTPReady(ctx, healthURL, ts.info.ContainerName, ts.startTimeout); err != nil {
 			log.Printf("proxy: http-healthcheck: %v; dropping connection from \033[36m%s\033[0m", err, conn.RemoteAddr())
 			return
 		}

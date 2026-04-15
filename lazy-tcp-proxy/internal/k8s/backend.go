@@ -293,6 +293,17 @@ func (b *Backend) deploymentToTargetInfo(d appsv1.Deployment) (types.TargetInfo,
 	cronStop := parseCronAnnotation(d.Name, "lazy-tcp-proxy.cron-stop", ann["lazy-tcp-proxy.cron-stop"])
 
 	httpHealthCheck := types.ParseHTTPHealthCheckLabel(d.Name, ann["lazy-tcp-proxy.http-healthcheck"])
+	if httpHealthCheck != "" {
+		// Log the configured URL, substituting ${container} with the Kubernetes
+		// Service DNS name that GetUpstreamHost will use at connection time.
+		svcName := d.Name
+		if v := strings.TrimSpace(ann["lazy-tcp-proxy.service-name"]); v != "" {
+			svcName = v
+		}
+		svcHost := fmt.Sprintf("%s.%s.svc.cluster.local", svcName, d.Namespace)
+		displayURL := strings.ReplaceAll(httpHealthCheck, "${container}", svcHost)
+		log.Printf("%s: http-healthcheck URL configured %q", d.Name, displayURL)
+	}
 
 	return types.TargetInfo{
 		ContainerID:     d.Namespace + "/" + d.Name,
