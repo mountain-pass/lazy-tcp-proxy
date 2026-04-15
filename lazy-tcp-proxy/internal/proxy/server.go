@@ -675,13 +675,13 @@ func ipBlocked(remoteAddr string, info types.TargetInfo) bool {
 	return false
 }
 
-// resolveHealthURL substitutes ${container} in the health-check URL template
+// resolveHealthURL substitutes {{container}} in the health-check URL template
 // with the upstream IP/host returned by GetUpstreamHost. Returns the resolved
-// URL and nil on success. If ${container} is present but the IP cannot be
+// URL and nil on success. If {{container}} is present but the IP cannot be
 // determined, returns ("", error) so the caller can skip the health check.
-// URLs without ${container} are returned unchanged.
+// URLs without {{container}} are returned unchanged.
 func (s *ProxyServer) resolveHealthURL(ctx context.Context, rawURL, containerID, containerName, hint string) (string, error) {
-	if !strings.Contains(rawURL, "${container}") {
+	if !strings.Contains(rawURL, "{{container}}") {
 		return rawURL, nil
 	}
 	host, err := s.backend.GetUpstreamHost(ctx, containerID, hint)
@@ -691,7 +691,7 @@ func (s *ProxyServer) resolveHealthURL(ctx context.Context, rawURL, containerID,
 	if host == "" {
 		return "", fmt.Errorf("cannot resolve IP for \033[33m%s\033[0m: no address available", containerName)
 	}
-	return strings.ReplaceAll(rawURL, "${container}", host), nil
+	return strings.ReplaceAll(rawURL, "{{container}}", host), nil
 }
 
 // waitForHTTPReady polls url with HTTP GET every dialInterval until a 2xx

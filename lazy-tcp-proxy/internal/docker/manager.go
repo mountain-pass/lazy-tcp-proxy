@@ -219,7 +219,7 @@ func (m *Manager) containerToTargetInfo(ctx context.Context, containerID string)
 		}
 		var displayURL string
 		if ip != "" {
-			displayURL = strings.ReplaceAll(httpHealthCheck, "${container}", ip)
+			displayURL = strings.ReplaceAll(httpHealthCheck, "{{container}}", ip)
 		} else {
 			displayURL = httpHealthCheck // show template when IP not yet assigned
 		}

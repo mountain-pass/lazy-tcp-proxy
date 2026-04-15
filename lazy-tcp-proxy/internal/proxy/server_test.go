@@ -903,7 +903,7 @@ func TestResolveHealthURL_NoPlaceholder(t *testing.T) {
 func TestResolveHealthURL_PlaceholderReplacedWithIP(t *testing.T) {
 	s := newTestServer()
 	s.backend = &mockBackend{upstreamHost: "172.17.0.3"}
-	got, err := s.resolveHealthURL(context.Background(), "http://${container}:8080/health", "ctr-1", "myapp", "")
+	got, err := s.resolveHealthURL(context.Background(), "http://{{container}}:8080/health", "ctr-1", "myapp", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -916,7 +916,7 @@ func TestResolveHealthURL_PlaceholderReplacedWithIP(t *testing.T) {
 func TestResolveHealthURL_GetUpstreamHostError(t *testing.T) {
 	s := newTestServer()
 	s.backend = &mockBackend{upstreamErr: fmt.Errorf("no network")}
-	_, err := s.resolveHealthURL(context.Background(), "http://${container}:8080/health", "ctr-1", "myapp", "")
+	_, err := s.resolveHealthURL(context.Background(), "http://{{container}}:8080/health", "ctr-1", "myapp", "")
 	if err == nil {
 		t.Error("expected error when GetUpstreamHost fails")
 	}
@@ -925,7 +925,7 @@ func TestResolveHealthURL_GetUpstreamHostError(t *testing.T) {
 func TestResolveHealthURL_GetUpstreamHostEmptyHost(t *testing.T) {
 	s := newTestServer()
 	s.backend = &mockBackend{upstreamHost: "", upstreamErr: nil}
-	_, err := s.resolveHealthURL(context.Background(), "http://${container}:8080/health", "ctr-1", "myapp", "")
+	_, err := s.resolveHealthURL(context.Background(), "http://{{container}}:8080/health", "ctr-1", "myapp", "")
 	if err == nil {
 		t.Error("expected error when GetUpstreamHost returns empty host")
 	}

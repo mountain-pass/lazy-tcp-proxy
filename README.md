@@ -66,7 +66,7 @@ Add these labels to any container you want proxied/managed:
 | `lazy-tcp-proxy.dependants` | No | Comma-separated names of other managed containers/deployments that should start and stop alongside this one (see [Dependency Cascade](#dependency-cascade)) |
 | `lazy-tcp-proxy.cron-start` | No | 5-field cron expression — start the container/deployment on this schedule (see [Cron Scheduling](#cron-scheduling)) |
 | `lazy-tcp-proxy.cron-stop` | No | 5-field cron expression — stop the container/deployment on this schedule (see [Cron Scheduling](#cron-scheduling)) |
-| `lazy-tcp-proxy.http-healthcheck` | No | URL to poll after a cold start — proxy waits for a 2xx response before forwarding TCP traffic. Supports `${container}` placeholder (see [HTTP Health Check](#http-health-check)) |
+| `lazy-tcp-proxy.http-healthcheck` | No | URL to poll after a cold start — proxy waits for a 2xx response before forwarding TCP traffic. Supports `{{container}}` placeholder (see [HTTP Health Check](#http-health-check)) |
 
 \* At least one of `lazy-tcp-proxy.ports` or `lazy-tcp-proxy.udp-ports` must be set. A container may use TCP only, UDP only, or both.
 
@@ -250,7 +250,7 @@ Some containers bind their service port during startup but aren't ready to handl
 labels:
   - "lazy-tcp-proxy.enabled=true"
   - "lazy-tcp-proxy.ports=3306:3306"
-  - "lazy-tcp-proxy.http-healthcheck=http://${container}:8080/health"
+  - "lazy-tcp-proxy.http-healthcheck=http://{{container}}:8080/health"
 ```
 
 **How it works:**
@@ -261,17 +261,17 @@ labels:
 - If no 2xx is received within `START_TIMEOUT_SECS` (default 30 s), the client connection is dropped and an error is logged. The next incoming connection will trigger a fresh cold-start attempt.
 - When the label is absent, existing TCP behaviour is unchanged (the dial-retry loop handles port-level readiness).
 
-**`${container}` placeholder:**
+**`{{container}}` placeholder:**
 
-To avoid hardcoding internal hostnames, use `${container}` in the URL — it is substituted with the container's actual name at startup:
+To avoid hardcoding internal IP addresses, use `{{container}}` in the URL — it is substituted with the container's IP address (Docker) or Service DNS name (Kubernetes) at connection time:
 
 ```yaml
-# Both of these are equivalent for a container named "my-app":
-lazy-tcp-proxy.http-healthcheck: "http://my-app:8080/health"
-lazy-tcp-proxy.http-healthcheck: "http://${container}:8080/health"
+# Both of these are equivalent for a container whose IP is 172.17.0.3:
+lazy-tcp-proxy.http-healthcheck: "http://172.17.0.3:8080/health"
+lazy-tcp-proxy.http-healthcheck: "http://{{container}}:8080/health"
 ```
 
-The placeholder works because the proxy shares a Docker network with the managed container and can reach it by name.
+> **Note:** Use `{{container}}` (double braces), not `${container}`. Single-dollar-brace syntax is interpreted by Docker Compose as a shell variable substitution and will be silently replaced with an empty string if the `container` environment variable is not set.
 
 **Kubernetes annotation:**
 
@@ -279,7 +279,7 @@ The placeholder works because the proxy shares a Docker network with the managed
 annotations:
   lazy-tcp-proxy.enabled: "true"
   lazy-tcp-proxy.ports: "3306:3306"
-  lazy-tcp-proxy.http-healthcheck: "http://${container}:8080/health"
+  lazy-tcp-proxy.http-healthcheck: "http://{{container}}:8080/health"
 ```
 
 > **Note:** The HTTP health check applies to TCP connections only. UDP already has a protocol-native readiness probe (it retries the first datagram until the upstream responds).

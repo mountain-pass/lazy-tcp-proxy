@@ -301,7 +301,7 @@ func (b *Backend) deploymentToTargetInfo(d appsv1.Deployment) (types.TargetInfo,
 			svcName = v
 		}
 		svcHost := fmt.Sprintf("%s.%s.svc.cluster.local", svcName, d.Namespace)
-		displayURL := strings.ReplaceAll(httpHealthCheck, "${container}", svcHost)
+		displayURL := strings.ReplaceAll(httpHealthCheck, "{{container}}", svcHost)
 		log.Printf("%s: http-healthcheck URL configured %q", d.Name, displayURL)
 	}
 
