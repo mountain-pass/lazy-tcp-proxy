@@ -14,6 +14,7 @@ import (
 	"runtime/debug"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -774,8 +775,25 @@ func (s *ProxyServer) handleConn(conn net.Conn, ts *targetState) {
 		go s.fireWebhook(ts.info.WebhookURL, "container_started", ts.info.ContainerID, ts.info.ContainerName, "", "", 0)
 	}
 
+	// Determine preferred network hint (first network ID in list; unused in k8s mode)
+	var hint string
+	if len(ts.info.NetworkIDs) > 0 {
+		hint = ts.info.NetworkIDs[0]
+	}
+
 	if ts.httpHealthCheck != "" {
-		if err := s.waitForHTTPReady(ctx, ts.httpHealthCheck, ts.info.ContainerName, ts.startTimeout); err != nil {
+		healthURL := ts.httpHealthCheck
+		if strings.Contains(healthURL, "${container}") {
+			// Resolve the upstream host (IP or service DNS name) so the health
+			// check reaches the same target as the TCP dial.
+			host, err := s.backend.GetUpstreamHost(ctx, ts.info.ContainerID, hint)
+			if err != nil {
+				// Fall back to the container name (Docker internal DNS).
+				host = ts.info.ContainerName
+			}
+			healthURL = strings.ReplaceAll(healthURL, "${container}", host)
+		}
+		if err := s.waitForHTTPReady(ctx, healthURL, ts.info.ContainerName, ts.startTimeout); err != nil {
 			log.Printf("proxy: http-healthcheck: %v; dropping connection from \033[36m%s\033[0m", err, conn.RemoteAddr())
 			return
 		}
@@ -784,12 +802,6 @@ func (s *ProxyServer) handleConn(conn net.Conn, ts *targetState) {
 			log.Printf("proxy: docker-healthcheck: %v; dropping connection from \033[36m%s\033[0m", err, conn.RemoteAddr())
 			return
 		}
-	}
-
-	// Determine preferred network hint (first network ID in list; unused in k8s mode)
-	var hint string
-	if len(ts.info.NetworkIDs) > 0 {
-		hint = ts.info.NetworkIDs[0]
 	}
 
 	// Retry dial to upstream — budget derived from the configured start timeout.

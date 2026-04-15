@@ -296,16 +296,30 @@ func TestParseHTTPHealthCheckLabel_ValidURL(t *testing.T) {
 }
 
 func TestParseHTTPHealthCheckLabel_Placeholder(t *testing.T) {
+	// ${container} is NOT substituted at parse time — the raw template is returned
+	// so the proxy can resolve the upstream host (IP or DNS) at connection time.
 	got := ParseHTTPHealthCheckLabel("myapp", "http://${container}:8080/health")
-	if got != "http://myapp:8080/health" {
-		t.Errorf("got %q, want %q", got, "http://myapp:8080/health")
+	if got != "http://${container}:8080/health" {
+		t.Errorf("got %q, want raw template %q", got, "http://${container}:8080/health")
 	}
 }
 
 func TestParseHTTPHealthCheckLabel_PlaceholderHTTPS(t *testing.T) {
 	got := ParseHTTPHealthCheckLabel("svc", "https://${container}:443/ready")
-	if got != "https://svc:443/ready" {
-		t.Errorf("got %q, want %q", got, "https://svc:443/ready")
+	if got != "https://${container}:443/ready" {
+		t.Errorf("got %q, want raw template %q", got, "https://${container}:443/ready")
+	}
+}
+
+func TestParseHTTPHealthCheckLabel_MisspelledPlaceholder(t *testing.T) {
+	// A ${...} that isn't ${container} should be logged as a warning but the URL
+	// is still accepted if structurally valid (after treating the bad placeholder
+	// as a literal string that happens to be a valid hostname — it won't be, so
+	// the URL will be rejected and "" returned).
+	got := ParseHTTPHealthCheckLabel("myapp", "http://${Container}:8080/health")
+	// ${Container} is not a valid hostname char sequence, so the URL is invalid.
+	if got != "" {
+		t.Errorf("got %q, want empty string for URL with invalid placeholder host", got)
 	}
 }
 

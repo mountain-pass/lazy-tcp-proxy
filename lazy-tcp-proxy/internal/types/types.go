@@ -143,18 +143,31 @@ func ParseIdleTimeoutLabel(name, raw string) *time.Duration {
 	return &d
 }
 
-// ParseHTTPHealthCheckLabel validates and returns the http-healthcheck URL,
-// substituting ${container} with the actual container name.
-// Returns "" if the value is absent, empty, or not a valid HTTP/HTTPS URL.
+// ParseHTTPHealthCheckLabel validates the http-healthcheck URL template and
+// returns it unchanged (including any ${container} placeholder).
+// Substitution of ${container} is deferred to connection time so the actual
+// upstream host (IP or DNS name) can be used.
+// Returns "" if the value is absent, empty, or not a valid URL structure.
 func ParseHTTPHealthCheckLabel(containerName, raw string) string {
 	v := strings.TrimSpace(raw)
 	if v == "" {
 		return ""
 	}
-	v = strings.ReplaceAll(v, "${container}", containerName)
-	if _, err := url.ParseRequestURI(v); err != nil {
-		log.Printf("container %s: ignoring invalid http-healthcheck URL %q: %v", containerName, v, err)
+	// Warn when the URL contains a ${...} expression that isn't ${container}.
+	// This catches common misspellings like ${Container} or ${CONTAINER}.
+	if strings.Contains(v, "${") && !strings.Contains(v, "${container}") {
+		log.Printf("container %s: http-healthcheck URL %q: placeholder does not match ${container} (case-sensitive) — check spelling", containerName, v)
+	}
+	// Validate the URL structure by substituting a dummy hostname for the
+	// placeholder so url.ParseRequestURI sees a well-formed URL.
+	check := strings.ReplaceAll(v, "${container}", "placeholder")
+	if _, err := url.ParseRequestURI(check); err != nil {
+		log.Printf("container %s: ignoring invalid http-healthcheck URL %q: %v", containerName, check, err)
 		return ""
 	}
-	return v
+	// Log the resolved display URL (container name substituted) so operators
+	// can confirm the label was picked up correctly at initialisation time.
+	display := strings.ReplaceAll(v, "${container}", containerName)
+	log.Printf("%s: http-healthcheck URL configured %q", containerName, display)
+	return v // raw template returned; ${container} resolved at connection time
 }
