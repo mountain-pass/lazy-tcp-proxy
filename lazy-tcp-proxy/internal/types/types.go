@@ -165,5 +165,9 @@ func ParseHTTPHealthCheckLabel(containerName, raw string) string {
 		log.Printf("container %s: ignoring invalid http-healthcheck URL %q: %v", containerName, check, err)
 		return ""
 	}
+	// Log the resolved display URL (container name substituted) so operators
+	// can confirm the label was picked up correctly at initialisation time.
+	display := strings.ReplaceAll(v, "${container}", containerName)
+	log.Printf("%s: http-healthcheck URL configured %q", containerName, display)
 	return v // raw template returned; ${container} resolved at connection time
 }
