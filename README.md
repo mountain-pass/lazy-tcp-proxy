@@ -84,6 +84,50 @@ labels:
 
 ---
 
+## Container Self-Access
+
+Some containers periodically poll their own endpoints — health checks, background sync tasks, keep-alive pings, etc. If that traffic routes through the proxy, it resets the idle timer and prevents the container from ever being stopped.
+
+**Why this happens:**
+
+When a container accesses itself via the Docker network gateway (e.g., `172.22.0.1:PORT`), the kernel source-NATs the packet. By the time the connection reaches the proxy, the source address is `172.22.0.1` — the proxy cannot distinguish the container talking to itself from any other host or container routing traffic through that same gateway.
+
+**Three ways to prevent self-access from keeping a container alive:**
+
+**1. Disable the keep-alive traffic in the application (ideal)**
+
+The cleanest fix. Configure the application not to poll its own proxied ports. For example, point internal health checks at the container's direct port (e.g., `11434`) rather than the proxy's listen port (e.g., `9001`), or disable the polling entirely.
+
+**2. Do not expose the keep-alive port via the proxy**
+
+If only some ports need lazy startup, only include those in `lazy-tcp-proxy.ports` or `lazy-tcp-proxy.udp-ports`. A port that is not proxied cannot wake the container or reset the idle timer.
+
+```yaml
+labels:
+  # Only proxy port 8080 — the internal health-check port 9090 is not listed
+  - "lazy-tcp-proxy.ports=9000:8080"
+```
+
+**3. Block traffic from the gateway IP using `lazy-tcp-proxy.block-list`**
+
+Add the Docker network's gateway IP to the container's block-list. Blocked connections are dropped before `EnsureRunning` is called, so they neither wake the container nor reset the idle timer.
+
+```yaml
+labels:
+  - "lazy-tcp-proxy.enabled=true"
+  - "lazy-tcp-proxy.ports=9001:11434"
+  - "lazy-tcp-proxy.block-list=172.22.0.1"
+```
+
+> **Caveat:** The gateway IP is shared by the Docker host and by all containers on the same network that route through the gateway. For example, if another container accesses this service using `host.docker.internal` instead of the internal Docker network name, that traffic will also be blocked. For precise access control, prefer option 1 or 2, or reconfigure consumers to use internal Docker network addresses (e.g., `http://my-service:11434`) instead of going via the gateway.
+
+The gateway IP varies by Docker network subnet. Find yours with:
+```sh
+docker network inspect <network-name> --format '{{range .IPAM.Config}}{{.Gateway}}{{end}}'
+```
+
+---
+
 ## Environment Variables
 
 | Variable              | Description                                                        | Default                   |
