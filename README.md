@@ -133,7 +133,7 @@ docker network inspect <network-name> --format '{{range .IPAM.Config}}{{.Gateway
 | Variable              | Description                                                        | Default                   |
 |-----------------------|--------------------------------------------------------------------|---------------------------|
 | `IDLE_TIMEOUT_SECS`   | How long (in seconds) a container must be idle before being stopped. `0` = stop immediately once all connections close | 120  |
-| `START_TIMEOUT_SECS`  | How long (in seconds) to wait for an upstream to be ready after a cold start — applies to both the UDP datagram readiness probe and the HTTP health check (`lazy-tcp-proxy.http-healthcheck`). If the timeout is reached the connection/flow is dropped. Override per-container with the `lazy-tcp-proxy.start-timeout-secs` label | 30 |
+| `START_TIMEOUT_SECS`  | How long (in seconds) to wait for an upstream to be ready after a cold start — applies to the UDP datagram readiness probe, the HTTP health check (`lazy-tcp-proxy.http-healthcheck`), and the Docker HEALTHCHECK readiness gate. If the timeout is reached the connection/flow is dropped. Override per-container with the `lazy-tcp-proxy.start-timeout-secs` label | 30 |
 | `POLL_INTERVAL_SECS`  | How often (in seconds) to check for idle containers                | 15                        |
 | `DOCKER_SOCK`         | Path to Docker socket                                              | `/var/run/docker.sock`    |
 | `STATUS_PORT`         | Port for the HTTP status server; set to `0` to disable            | 8080                      |
@@ -283,6 +283,48 @@ annotations:
 ```
 
 > **Note:** The HTTP health check applies to TCP connections only. UDP already has a protocol-native readiness probe (it retries the first datagram until the upstream responds).
+
+---
+
+## Docker HEALTHCHECK Readiness Gate
+
+If a container ships with a Docker `HEALTHCHECK` instruction (or one is declared in a Compose file) and no `lazy-tcp-proxy.http-healthcheck` label is set, the proxy automatically waits for the container's health status to become `healthy` before forwarding TCP traffic. No configuration is required.
+
+**Priority order** (first matching rule wins):
+
+1. `lazy-tcp-proxy.http-healthcheck` label set → poll the declared URL (see [HTTP Health Check](#http-health-check))
+2. Docker `HEALTHCHECK` present, no label → wait for `healthy` via Docker API
+3. Neither → existing TCP dial-retry loop (unchanged)
+
+**How it works:**
+
+- After `EnsureRunning` succeeds, the proxy calls `ContainerInspect` every second and reads `State.Health.Status`.
+- `healthy` → forwarding begins.
+- `unhealthy` → the client connection is dropped immediately (no point retrying a container the daemon itself considers broken).
+- `starting` → retried until `START_TIMEOUT_SECS` (default 30 s) is exhausted.
+- Containers whose images have no `HEALTHCHECK` report status `none` — these fall through to the TCP dial-retry loop exactly as before.
+
+**Example log output:**
+
+```
+proxy: docker-healthcheck: attempt 1: my-db → starting
+proxy: docker-healthcheck: attempt 2: my-db → starting
+proxy: docker-healthcheck: my-db healthy
+```
+
+**Zero configuration example (PostgreSQL):**
+
+```yaml
+services:
+  db:
+    image: postgres:16
+    labels:
+      - "lazy-tcp-proxy.enabled=true"
+      - "lazy-tcp-proxy.ports=5432:5432"
+    # The official postgres image ships with a HEALTHCHECK — no extra labels needed.
+```
+
+> **Note:** This feature is Kubernetes-transparent. The Kubernetes backend's `WaitUntilHealthy` is a no-op that returns immediately, and `HasHealthCheck` is always `false` for Kubernetes deployments. Kubernetes readiness probes are managed by the cluster, not the proxy.
 
 ---
 

@@ -86,6 +86,7 @@ type targetState struct {
 	idleTimeout     *time.Duration // nil = use server default
 	startTimeout    time.Duration  // how long to retry dialing the upstream on cold start
 	httpHealthCheck string         // URL to poll for readiness; "" = disabled
+	hasHealthCheck  bool           // true if the container has a Docker HEALTHCHECK configured
 	running         bool
 	removed         bool
 }
@@ -122,6 +123,7 @@ type containerBackend interface {
 	EnsureRunning(ctx context.Context, targetID string) error
 	StopContainer(ctx context.Context, targetID, targetName string) error
 	GetUpstreamHost(ctx context.Context, targetID, hint string) (string, error)
+	WaitUntilHealthy(ctx context.Context, containerID, name string, timeout time.Duration) error
 }
 
 // cronScheduler is the subset of scheduler methods used by ProxyServer.
@@ -380,6 +382,7 @@ func (s *ProxyServer) RegisterTarget(info types.TargetInfo) {
 			existing.idleTimeout = info.IdleTimeout
 			existing.startTimeout = effectiveTimeout(info.StartTimeout, s.startTimeout)
 			existing.httpHealthCheck = info.HTTPHealthCheck
+			existing.hasHealthCheck = info.HasHealthCheck
 			existing.running = info.Running
 			existing.removed = false
 			log.Printf("proxy: updated TCP target \033[33m%s\033[0m on port %d->%d", info.ContainerName, m.ListenPort, m.TargetPort)
@@ -400,6 +403,7 @@ func (s *ProxyServer) RegisterTarget(info types.TargetInfo) {
 			idleTimeout:     info.IdleTimeout,
 			startTimeout:    effectiveTimeout(info.StartTimeout, s.startTimeout),
 			httpHealthCheck: info.HTTPHealthCheck,
+			hasHealthCheck:  info.HasHealthCheck,
 			running:         info.Running,
 		}
 		s.targets[m.ListenPort] = ts
@@ -773,6 +777,11 @@ func (s *ProxyServer) handleConn(conn net.Conn, ts *targetState) {
 	if ts.httpHealthCheck != "" {
 		if err := s.waitForHTTPReady(ctx, ts.httpHealthCheck, ts.info.ContainerName, ts.startTimeout); err != nil {
 			log.Printf("proxy: http-healthcheck: %v; dropping connection from \033[36m%s\033[0m", err, conn.RemoteAddr())
+			return
+		}
+	} else if ts.hasHealthCheck {
+		if err := s.backend.WaitUntilHealthy(ctx, ts.info.ContainerID, ts.info.ContainerName, ts.startTimeout); err != nil {
+			log.Printf("proxy: docker-healthcheck: %v; dropping connection from \033[36m%s\033[0m", err, conn.RemoteAddr())
 			return
 		}
 	}

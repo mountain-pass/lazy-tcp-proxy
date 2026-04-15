@@ -550,6 +550,9 @@ func (m *mockBackend) StopContainer(_ context.Context, containerID, _ string) er
 	}
 	return nil
 }
+func (m *mockBackend) WaitUntilHealthy(_ context.Context, _, _ string, _ time.Duration) error {
+	return nil
+}
 
 func newTestServer() *ProxyServer {
 	return &ProxyServer{

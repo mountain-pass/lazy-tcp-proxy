@@ -65,8 +65,9 @@ func startUDPEchoServer(t *testing.T) int {
 // succeeds on EnsureRunning / StopContainer — no real Docker daemon needed.
 type integrationMock struct{ host string }
 
-func (m *integrationMock) EnsureRunning(_ context.Context, _ string) error    { return nil }
-func (m *integrationMock) StopContainer(_ context.Context, _, _ string) error { return nil }
+func (m *integrationMock) EnsureRunning(_ context.Context, _ string) error                         { return nil }
+func (m *integrationMock) StopContainer(_ context.Context, _, _ string) error                     { return nil }
+func (m *integrationMock) WaitUntilHealthy(_ context.Context, _, _ string, _ time.Duration) error { return nil }
 func (m *integrationMock) GetUpstreamHost(_ context.Context, _, _ string) (string, error) {
 	return m.host, nil
 }

@@ -233,6 +233,12 @@ func (b *Backend) GetUpstreamHost(_ context.Context, tid, _ string) (string, err
 // Shutdown is a no-op for the k8s backend (no network joins to undo).
 func (b *Backend) Shutdown(_ context.Context) {}
 
+// WaitUntilHealthy is a no-op for the k8s backend. Kubernetes readiness is
+// managed by the cluster via readiness probes; the proxy does not poll it.
+func (b *Backend) WaitUntilHealthy(_ context.Context, _, _ string, _ time.Duration) error {
+	return nil
+}
+
 // deploymentToTargetInfo converts a Deployment into a TargetInfo.
 func (b *Backend) deploymentToTargetInfo(d appsv1.Deployment) (types.TargetInfo, error) {
 	ann := d.Annotations

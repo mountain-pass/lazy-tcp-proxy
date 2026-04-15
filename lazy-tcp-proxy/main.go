@@ -248,6 +248,7 @@ type backendManager interface {
 	EnsureRunning(ctx context.Context, targetID string) error
 	StopContainer(ctx context.Context, targetID, targetName string) error
 	GetUpstreamHost(ctx context.Context, targetID, hint string) (string, error)
+	WaitUntilHealthy(ctx context.Context, containerID, name string, timeout time.Duration) error
 	Shutdown(ctx context.Context)
 }
 

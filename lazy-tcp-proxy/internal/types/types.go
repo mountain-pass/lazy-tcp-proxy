@@ -32,6 +32,7 @@ type TargetInfo struct {
 	CronStart       string         // 5-field cron expression; "" = not scheduled
 	CronStop        string         // 5-field cron expression; "" = not scheduled
 	HTTPHealthCheck string         // URL to poll for readiness; "" = disabled
+	HasHealthCheck  bool           // true if the container has a HEALTHCHECK configured
 }
 
 // TargetHandler is implemented by the proxy server to receive target updates.

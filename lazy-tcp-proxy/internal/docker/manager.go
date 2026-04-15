@@ -208,6 +208,10 @@ func (m *Manager) containerToTargetInfo(ctx context.Context, containerID string)
 
 	httpHealthCheck := types.ParseHTTPHealthCheckLabel(name, inspect.Config.Labels["lazy-tcp-proxy.http-healthcheck"])
 
+	hasHealthCheck := inspect.State.Health != nil &&
+		inspect.State.Health.Status != "" &&
+		inspect.State.Health.Status != "none"
+
 	return types.TargetInfo{
 		ContainerID:     containerID,
 		ContainerName:   name,
@@ -224,6 +228,7 @@ func (m *Manager) containerToTargetInfo(ctx context.Context, containerID string)
 		CronStart:       cronStart,
 		CronStop:        cronStop,
 		HTTPHealthCheck: httpHealthCheck,
+		HasHealthCheck:  hasHealthCheck,
 	}, nil
 }
 
@@ -336,6 +341,44 @@ func (m *Manager) warnSharedDefaultNetworks(ctx context.Context, info types.Targ
 			}
 		}
 	}
+}
+
+// healthCheckPollInterval is how often WaitUntilHealthy polls the Docker API.
+const healthCheckPollInterval = time.Second
+
+// WaitUntilHealthy polls the container's Docker HEALTHCHECK status every
+// healthCheckPollInterval until it is "healthy", returns an error immediately
+// if "unhealthy", or returns an error once timeout is exceeded.
+func (m *Manager) WaitUntilHealthy(ctx context.Context, containerID, name string, timeout time.Duration) error {
+	retries := int((timeout + healthCheckPollInterval - 1) / healthCheckPollInterval)
+	if retries < 1 {
+		retries = 1
+	}
+	for attempt := 1; attempt <= retries; attempt++ {
+		result, err := m.cli.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
+		if err != nil {
+			return fmt.Errorf("inspecting container: %w", err)
+		}
+		status := ""
+		if result.Container.State.Health != nil {
+			status = string(result.Container.State.Health.Status)
+		}
+		switch status {
+		case "healthy":
+			log.Printf("proxy: docker-healthcheck: \033[33m%s\033[0m healthy", name)
+			return nil
+		case "unhealthy":
+			return fmt.Errorf("container \033[33m%s\033[0m is unhealthy", name)
+		default:
+			log.Printf("proxy: docker-healthcheck: attempt %d: \033[33m%s\033[0m → %s", attempt, name, status)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(healthCheckPollInterval):
+		}
+	}
+	return fmt.Errorf("container \033[33m%s\033[0m not healthy after %s", name, timeout)
 }
 
 // EnsureRunning starts the container if it is not already running.
