@@ -152,10 +152,7 @@ func (m *Manager) containerToTargetInfo(ctx context.Context, containerID string)
 	inspect := result.Container
 
 	portsStr, hasPorts := inspect.Config.Labels["lazy-tcp-proxy.ports"]
-	udpPortsStr, hasUDPPorts := inspect.Config.Labels["lazy-tcp-proxy.udp-ports"]
-	if !hasPorts && (!hasUDPPorts || udpPortsStr == "") {
-		return types.TargetInfo{}, fmt.Errorf("missing label lazy-tcp-proxy.ports or lazy-tcp-proxy.udp-ports")
-	}
+	udpPortsStr := inspect.Config.Labels["lazy-tcp-proxy.udp-ports"]
 	var ports []types.PortMapping
 	if hasPorts {
 		ports = types.ParsePortMappings("lazy-tcp-proxy.ports", portsStr)
@@ -165,7 +162,7 @@ func (m *Manager) containerToTargetInfo(ctx context.Context, containerID string)
 	}
 
 	var udpPorts []types.PortMapping
-	if hasUDPPorts && udpPortsStr != "" {
+	if udpPortsStr != "" {
 		udpPorts = types.ParsePortMappings("lazy-tcp-proxy.udp-ports", udpPortsStr)
 	}
 
@@ -516,23 +513,16 @@ func (m *Manager) WatchEvents(ctx context.Context, handler types.TargetHandler) 
 						log.Printf("docker: event: container %s started but not proxied: missing label lazy-tcp-proxy.enabled=true", name)
 						continue
 					}
-					portsVal, hasPorts := attrs["lazy-tcp-proxy.ports"]
-					udpPortsVal := attrs["lazy-tcp-proxy.udp-ports"]
-					if !hasPorts && udpPortsVal == "" {
-						log.Printf("docker: event: container %s started but not proxied: missing label lazy-tcp-proxy.ports or lazy-tcp-proxy.udp-ports", name)
-						continue
-					}
-					valid := !hasPorts // UDP-only: skip TCP validation
-					if hasPorts {
-						for _, token := range strings.Split(portsVal, ",") {
-							parts := strings.SplitN(strings.TrimSpace(token), ":", 2)
-							if len(parts) == 2 {
-								_, e1 := strconv.Atoi(strings.TrimSpace(parts[0]))
-								_, e2 := strconv.Atoi(strings.TrimSpace(parts[1]))
-								if e1 == nil && e2 == nil {
-									valid = true
-									break
-								}
+					if portsVal, hasPorts := attrs["lazy-tcp-proxy.ports"]; hasPorts {
+					valid := false
+					for _, token := range strings.Split(portsVal, ",") {
+						parts := strings.SplitN(strings.TrimSpace(token), ":", 2)
+						if len(parts) == 2 {
+							_, e1 := strconv.Atoi(strings.TrimSpace(parts[0]))
+							_, e2 := strconv.Atoi(strings.TrimSpace(parts[1]))
+							if e1 == nil && e2 == nil {
+								valid = true
+								break
 							}
 						}
 					}
@@ -540,6 +530,7 @@ func (m *Manager) WatchEvents(ctx context.Context, handler types.TargetHandler) 
 						log.Printf("docker: event: container %s started but not proxied: invalid ports value %q", name, portsVal)
 						continue
 					}
+				}
 					log.Printf("docker: event: container added: \033[33m%s\033[0m", name)
 					info, err := m.containerToTargetInfo(ctx, msg.Actor.ID)
 					if err != nil {

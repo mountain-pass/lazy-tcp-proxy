@@ -2,7 +2,7 @@
 
 **Requirement**: [2026-04-16-auto-register-unlabeled-dependants.md](2026-04-16-auto-register-unlabeled-dependants.md)
 **Date**: 2026-04-16
-**Status**: Draft
+**Status**: Implemented
 
 ---
 

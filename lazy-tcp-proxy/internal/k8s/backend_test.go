@@ -130,6 +130,8 @@ func TestDiscover_OneDeployment(t *testing.T) {
 }
 
 func TestDiscover_MissingPortsAnnotation(t *testing.T) {
+	// A deployment with lazy-tcp-proxy.enabled=true but no port annotations is now
+	// registered as a cascade-only target (no listeners opened).
 	d := fakeDeployment("default", "myapp", 1, nil) // no annotations
 	fc := k8sfake.NewSimpleClientset(d)
 	b := newBackendWithClient(fc, "default")
@@ -137,8 +139,12 @@ func TestDiscover_MissingPortsAnnotation(t *testing.T) {
 	if err := b.Discover(context.Background(), h); err != nil {
 		t.Fatalf("Discover: %v", err)
 	}
-	if len(h.registered) != 0 {
-		t.Errorf("deployment with missing ports annotation should be skipped")
+	if len(h.registered) != 1 {
+		t.Fatalf("expected 1 registration (cascade-only), got %d", len(h.registered))
+	}
+	info := h.registered[0]
+	if len(info.Ports) != 0 || len(info.UDPPorts) != 0 {
+		t.Errorf("cascade-only deployment should have no ports; got Ports=%v UDPPorts=%v", info.Ports, info.UDPPorts)
 	}
 }
 
