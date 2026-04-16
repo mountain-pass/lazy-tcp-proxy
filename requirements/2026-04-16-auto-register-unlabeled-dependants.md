@@ -1,4 +1,4 @@
-# Auto-Register Unlabeled Dependant Containers
+# Make ports/udp-ports Labels Optional (Cascade-Only Registration)
 
 **Date Added**: 2026-04-16
 **Priority**: Medium
@@ -6,146 +6,146 @@
 
 ## Problem Statement
 
-REQ-045 implemented dependency cascade: when a managed container stops, all
-containers listed in its `lazy-tcp-proxy.dependants` label are also stopped
-(and vice versa on start). However, FR5 of REQ-045 restricted cascade to
-containers that are themselves registered with the proxy (i.e. they also carry
-`lazy-tcp-proxy.enabled=true`).
-
-In practice many dependants are pure backend services (e.g. `ollama`, a
-database, a worker) that need no proxy port of their own. Requiring users to
-add `lazy-tcp-proxy.enabled=true` (and dummy port labels) to those containers
-just to participate in cascade is counter-intuitive and unnecessary. The result
-is the observed runtime message:
+REQ-045 implemented dependency cascade, but FR5 required every dependant to be
+fully registered (i.e. carry `lazy-tcp-proxy.enabled=true` **and** at least one
+port label). In practice, pure backend containers (e.g. `ollama`) need no
+proxied port of their own — they only need to participate in start/stop
+cascade. The runtime message:
 
 ```
 proxy: cascade stop: open-webui → "ollama" not registered, skipping
 ```
 
+…occurs because `ollama` lacks the port labels and so is never added to the
+proxy's registry.
+
+The fix: keep the requirement for `lazy-tcp-proxy.enabled=true` on any
+container that should participate in cascade, but make `lazy-tcp-proxy.ports`
+and `lazy-tcp-proxy.udp-ports` **optional**. A container with only the
+`enabled` label is registered with no port listeners and participates solely in
+cascade start/stop.
+
 ## Functional Requirements
 
-1. **Auto-registration of referenced dependants** — During the Docker manager's
-   `Discover` phase, after all labeled containers are registered, the proxy must
-   inspect every unique container name listed in any `lazy-tcp-proxy.dependants`
-   label that is not already registered and register it automatically with an
-   empty port list (no TCP/UDP listeners created).
+1. **`lazy-tcp-proxy.ports` and `lazy-tcp-proxy.udp-ports` are optional** — A
+   container with only `lazy-tcp-proxy.enabled=true` is registered successfully.
+   No TCP or UDP listeners are opened for it.
 
-2. **No ports required for dependant-only containers** — A container registered
-   solely because it is referenced as a dependant does not need any
-   `lazy-tcp-proxy.*` labels. The proxy discovers it purely from another
-   container's `dependants` label.
+2. **Cascade-only containers participate fully** — A port-less registered
+   container can be started and stopped via cascade exactly like a port-bearing
+   container.
 
-3. **Cascade start/stop works for port-less containers** — `cascadeStop` and
-   `cascadeStart` in `ProxyServer` must handle dependants that have no managed
-   listeners. Running-state for these containers is tracked separately so that
-   an already-stopped dependant is not stopped again (silent no-op).
+3. **Running state is tracked for port-less containers** — `cascadeStop` must
+   not attempt to stop a port-less container that is already stopped
+   (silent no-op), just as it does for port-bearing containers.
 
-4. **External stop events update state** — When Docker fires a `die` event for
-   a port-less dependant, `ContainerStopped` already routes it through the
-   proxy (no label check on `die` events) and must update the dependant's
-   tracked running state.
+4. **Works for both Docker and Kubernetes** — The port-optional rule applies to
+   both `internal/docker/manager.go` and `internal/k8s/backend.go`.
 
-5. **Network join** — When a port-less dependant is auto-registered, the proxy
-   joins its networks (same as for labeled containers), so that the proxy can
-   reach it when cascade-starting.
-
-6. **No changes to k8s backend** — This release targets Docker only; the
-   Kubernetes backend already requires explicit labeling of all managed
-   resources.
-
-7. **Managed-only upstream unchanged** — Only the upstream (the labeled
-   container with the `dependants` label) need be registered the traditional
-   way. The dependant-only container requires no labels at all.
+5. **No change to cascade logic for port-bearing containers** — Existing
+   behaviour for containers with ports is unaffected.
 
 ## User Experience Requirements
 
-Before this change a user needed:
+Users add only `lazy-tcp-proxy.enabled=true` to a backend container, with no
+port labels required:
 
 ```yaml
-# ollama — had to add labels just for cascade participation
-labels:
-  - "lazy-tcp-proxy.enabled=true"
-  - "lazy-tcp-proxy.ports=11434:11434"   # dummy port
+services:
+  ollama:
+    image: ollama/ollama
+    labels:
+      - "lazy-tcp-proxy.enabled=true"
+      # no ports label needed
 
-# open-webui
-labels:
-  - "lazy-tcp-proxy.enabled=true"
-  - "lazy-tcp-proxy.ports=9002:8080"
-  - "lazy-tcp-proxy.dependants=ollama"
+  open-webui:
+    labels:
+      - "lazy-tcp-proxy.enabled=true"
+      - "lazy-tcp-proxy.ports=9002:8080"
+      - "lazy-tcp-proxy.dependants=ollama"
 ```
 
-After this change:
-
-```yaml
-# ollama — no labels needed
-# (no labels required)
-
-# open-webui
-labels:
-  - "lazy-tcp-proxy.enabled=true"
-  - "lazy-tcp-proxy.ports=9002:8080"
-  - "lazy-tcp-proxy.dependants=ollama"
-```
-
-Log output on startup:
+Log output at startup:
 
 ```
-docker: init: auto-registered dependant ollama (no proxy ports)
+docker: init: found containers: ollama, open-webui
+proxy: registered target ollama (cascade-only, no ports)
+proxy: registered target open-webui, TCP 9002->8080
+```
+
+Log output on cascade stop:
+
+```
+proxy: cascade stop: open-webui → ollama
+docker: stopping container ollama (idle timeout)
 ```
 
 ## Technical Requirements
 
-- New method `containerToMinimalTargetInfoByName(ctx, name string)` in
-  `internal/docker/manager.go` — inspects a container by name (no label
-  requirements) and returns a `TargetInfo` with empty `Ports`/`UDPPorts`.
-- `Discover` in `internal/docker/manager.go` — after the main label-filtered
-  loop, collect all unregistered dependant names and call the new method for
-  each, then call `handler.RegisterTarget(info)`.
-- New struct `dependantState` and map `dependantStates map[string]*dependantState`
-  in `internal/proxy/server.go` — tracks running state for port-less containers
-  (those with no TCP or UDP port mappings). Keyed by container ID.
-- `RegisterTarget` in `internal/proxy/server.go` — when `len(info.Ports) == 0`
-  and `len(info.UDPPorts) == 0`, populate `dependantStates` instead of
-  creating listeners. Still updates `nameToID`.
-- `cascadeStop` in `internal/proxy/server.go` — when checking running state for
-  a dependant, also consult `dependantStates`; update it to `running=false`
-  after a successful stop.
-- `cascadeStart` in `internal/proxy/server.go` — after a successful
-  `EnsureRunning`, update `dependantStates` entry to `running=true` if present.
-- `ContainerStopped` in `internal/proxy/server.go` — also set
+- **`internal/docker/manager.go` — `containerToTargetInfo`**: Remove the error
+  when neither `lazy-tcp-proxy.ports` nor `lazy-tcp-proxy.udp-ports` is present.
+  Return a valid `TargetInfo` with empty `Ports`/`UDPPorts` slices.
+
+- **`internal/docker/manager.go` — `WatchEvents`**: Remove the early `continue`
+  that skips containers missing port labels after the `enabled=true` check.
+  A container with only `lazy-tcp-proxy.enabled=true` should be registered.
+
+- **`internal/k8s/backend.go` — `deploymentToTargetInfo`**: Same change —
+  remove the error when both port annotations are absent.
+
+- **`internal/proxy/server.go` — `dependantState` / `dependantStates`**: Add a
+  small struct and a `map[string]*dependantState` (keyed by container ID) to
+  `ProxyServer` to track running state for port-less containers. Port-bearing
+  containers continue to track state in `targetState`/`udpListenerState`.
+
+- **`internal/proxy/server.go` — `RegisterTarget`**: When
+  `len(info.Ports) == 0 && len(info.UDPPorts) == 0`, populate `dependantStates`
+  and `nameToID` only — do not attempt to open listeners.
+
+- **`internal/proxy/server.go` — `ContainerStopped`**: Also set
   `dependantStates[containerID].running = false` if present.
-- `RemoveTarget` in `internal/proxy/server.go` — also delete from
+
+- **`internal/proxy/server.go` — `ContainerStarted`**: Also set
+  `dependantStates[containerID].running = true` if present.
+
+- **`internal/proxy/server.go` — `cascadeStop`**: After checking `s.targets`
+  and `s.udpTargets` for running state, also check `dependantStates`; update it
+  to `running=false` after a successful stop.
+
+- **`internal/proxy/server.go` — `cascadeStart`**: After a successful
+  `EnsureRunning`, update `dependantStates[depID].running = true` if present.
+
+- **`internal/proxy/server.go` — `RemoveTarget`**: Also delete from
   `dependantStates` if present.
 
 ## Acceptance Criteria
 
-- [ ] A container without `lazy-tcp-proxy.*` labels that is listed in another
-      container's `lazy-tcp-proxy.dependants` is automatically registered at
-      startup (visible in logs).
-- [ ] Cascade stop reaches the unlabeled dependant — no "not registered,
-      skipping" log message.
-- [ ] Cascade start reaches the unlabeled dependant.
-- [ ] If the dependant is already stopped when a cascade stop runs, no
-      `StopContainer` call is made (silent no-op).
-- [ ] A `die` Docker event for the unlabeled dependant updates its tracked
-      running state so that a subsequent cascade stop is a no-op.
-- [ ] Labeled containers with both `ports` and `dependants` labels continue
-      to work exactly as before (no regression).
+- [ ] A container with only `lazy-tcp-proxy.enabled=true` (no port labels) is
+      registered at startup with no listeners opened, visible in logs.
+- [ ] Cascade stop reaches a port-less registered container — no "not
+      registered, skipping" log message.
+- [ ] Cascade start reaches a port-less registered container.
+- [ ] If a port-less dependant is already stopped, cascade stop is a silent
+      no-op (no `StopContainer` call).
+- [ ] A `die` Docker event for a port-less container updates its tracked
+      running state.
+- [ ] Containers with ports continue to work exactly as before (no regression).
+- [ ] The k8s backend also accepts Deployments with no port annotations.
 - [ ] Existing unit tests continue to pass.
 
 ## Dependencies
 
-- REQ-045 (Dependency Cascade) — this extends FR5 of that requirement.
-- `internal/docker/manager.go` — `Discover`, new helper method
-- `internal/proxy/server.go` — `ProxyServer`, cascade logic, `dependantStates`
+- REQ-045 (Dependency Cascade) — relaxes FR5 of that requirement.
+- `internal/docker/manager.go`
+- `internal/k8s/backend.go`
+- `internal/proxy/server.go`
 
 ## Implementation Notes
 
-- The `WatchEvents` "die" path already calls `ContainerStopped` for **every**
-  dying container regardless of label, so state is updated automatically when
-  `ollama` stops externally.
-- The "start" event for unlabeled containers is currently skipped (label check
-  present) — this is acceptable because cascade start always sets
-  `running=true` explicitly after calling `EnsureRunning`.
-- Cascade is still **not** recursive (no transitive chains).
-- k8s backend not changed in this requirement.
+- The `WatchEvents` "die" path already calls `ContainerStopped` for every
+  dying container (no label check), so state updates happen automatically
+  when a port-less container stops externally.
+- `dependantStates` is only populated for port-less containers; port-bearing
+  containers continue to track state through their existing `targetState` /
+  `udpListenerState` structs.
+- Cascade remains non-recursive (no transitive chains).
