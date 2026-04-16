@@ -66,4 +66,4 @@
 | REQ-062 | Wire START_TIMEOUT_SECS to TCP Dial Retry Loop                           | Medium | Completed   | 2026-04-14 | [2026-04-14-wire-start-timeout-tcp.md](2026-04-14-wire-start-timeout-tcp.md) |
 | REQ-063 | HTTP Health Check Label for Container Readiness                          | Medium | Completed   | 2026-04-14 | [2026-04-14-http-health-check.md](2026-04-14-http-health-check.md) |
 | REQ-064 | Docker HEALTHCHECK Readiness Gate                                        | Medium | Completed   | 2026-04-15 | [2026-04-15-docker-healthcheck-readiness.md](2026-04-15-docker-healthcheck-readiness.md) |
-| REQ-065 | Webhook Usage Metrics (bytes, duration, port)                            | Medium | Planned     | 2026-04-16 | [2026-04-16-webhook-usage-metrics.md](2026-04-16-webhook-usage-metrics.md) |
+| REQ-065 | Webhook Usage Metrics (bytes, duration, port)                            | Medium | In Progress | 2026-04-16 | [2026-04-16-webhook-usage-metrics.md](2026-04-16-webhook-usage-metrics.md) |
