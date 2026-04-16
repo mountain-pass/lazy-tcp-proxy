@@ -70,6 +70,19 @@ func effectiveTimeout(perContainer *time.Duration, global time.Duration) time.Du
 	return global
 }
 
+// countingWriter wraps an io.Writer and accumulates bytes written.
+// Not safe for concurrent use; each goroutine must use its own instance.
+type countingWriter struct {
+	w io.Writer
+	n *int64
+}
+
+func (cw countingWriter) Write(p []byte) (int, error) {
+	n, err := cw.w.Write(p)
+	*cw.n += int64(n)
+	return n, err
+}
+
 var copyBufPool = sync.Pool{
 	New: func() any {
 		b := make([]byte, copyBufSize)
@@ -80,6 +93,7 @@ var copyBufPool = sync.Pool{
 // targetState holds runtime state for a single listen-port→container-port mapping.
 type targetState struct {
 	info            types.TargetInfo
+	listenPort      int
 	targetPort      int
 	listener        net.Listener
 	lastActive      time.Time
@@ -101,6 +115,13 @@ type webhookPayload struct {
 	ContainerID   string `json:"container_id"`
 	ContainerName string `json:"container_name"`
 	Timestamp     string `json:"timestamp"`
+	ListenPort    int    `json:"listen_port,omitempty"`
+	UpstreamAddr  string `json:"upstream_addr,omitempty"`
+	StartedAt     string `json:"started_at,omitempty"`
+	EndedAt       string `json:"ended_at,omitempty"`
+	DurationMs    int64  `json:"duration_ms,omitempty"`
+	BytesSent     int64  `json:"bytes_sent,omitempty"`
+	BytesReceived int64  `json:"bytes_received,omitempty"`
 }
 
 // newConnectionID returns a random UUID v4 string.
@@ -214,7 +235,7 @@ func (s *ProxyServer) CronStart(ctx context.Context, targetID, targetName string
 	}
 	s.mu.RUnlock()
 	if info.WebhookURL != "" {
-		go s.fireWebhook(info.WebhookURL, "container_started", targetID, targetName, "", "", 0)
+		go s.fireWebhook(info.WebhookURL, webhookPayload{Event: "container_started", ContainerID: targetID, ContainerName: targetName})
 	}
 	if len(info.Dependants) > 0 {
 		go s.cascadeStart(info)
@@ -256,7 +277,7 @@ func (s *ProxyServer) CronStop(ctx context.Context, targetID, targetName string)
 	s.mu.Unlock()
 	log.Printf("scheduler: cron-stop: stopped \033[33m%s\033[0m", targetName)
 	if info.WebhookURL != "" {
-		go s.fireWebhook(info.WebhookURL, "container_stopped", targetID, targetName, "", "", 0)
+		go s.fireWebhook(info.WebhookURL, webhookPayload{Event: "container_stopped", ContainerID: targetID, ContainerName: targetName})
 	}
 	if len(info.Dependants) > 0 {
 		go s.cascadeStop(info)
@@ -322,35 +343,25 @@ func (s *ProxyServer) Snapshot() []TargetSnapshot {
 }
 
 // fireWebhook POSTs a lifecycle event to the container's webhook URL.
-// connID, remoteAddr and remotePort are included for connection/flow events;
-// pass "", "", 0 for container lifecycle events.
-// Must be called in a goroutine — never blocks the proxy path.
-func (s *ProxyServer) fireWebhook(webhookURL, event, containerID, containerName, connID, remoteAddr string, remotePort int) {
-	id := containerID
-	if len(id) > 12 {
-		id = id[:12]
+// The caller populates all fields of payload except Timestamp (set here)
+// and ContainerID truncation (applied here). Must be called in a goroutine.
+func (s *ProxyServer) fireWebhook(webhookURL string, payload webhookPayload) {
+	if len(payload.ContainerID) > 12 {
+		payload.ContainerID = payload.ContainerID[:12]
 	}
-	payload := webhookPayload{
-		Event:         event,
-		ConnectionID:  connID,
-		RemoteAddr:    remoteAddr,
-		RemotePort:    remotePort,
-		ContainerID:   id,
-		ContainerName: containerName,
-		Timestamp:     time.Now().UTC().Format(time.RFC3339),
-	}
+	payload.Timestamp = time.Now().UTC().Format(time.RFC3339)
 	body, _ := json.Marshal(payload)
 	resp, err := s.webhookClient.Post(webhookURL, "application/json", bytes.NewReader(body))
 	if err != nil {
-		log.Printf("proxy: webhook: POST %s event=%s error: %v", webhookURL, event, err)
+		log.Printf("proxy: webhook: POST %s event=%s error: %v", webhookURL, payload.Event, err)
 		return
 	}
 	defer resp.Body.Close() //nolint:errcheck
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		log.Printf("proxy: webhook: POST %s event=%s non-2xx response: %d", webhookURL, event, resp.StatusCode)
+		log.Printf("proxy: webhook: POST %s event=%s non-2xx response: %d", webhookURL, payload.Event, resp.StatusCode)
 		return
 	}
-	log.Printf("proxy: webhook: delivered event=%s to %s (%d)", event, webhookURL, resp.StatusCode)
+	log.Printf("proxy: webhook: delivered event=%s to %s (%d)", payload.Event, webhookURL, resp.StatusCode)
 }
 
 // RegisterTarget adds or updates a target. One listener is created per port mapping.
@@ -398,6 +409,7 @@ func (s *ProxyServer) RegisterTarget(info types.TargetInfo) {
 
 		ts := &targetState{
 			info:            info,
+			listenPort:      m.ListenPort,
 			targetPort:      m.TargetPort,
 			listener:        ln,
 			lastActive:      time.Time{}, // zero — immediately idle
@@ -432,6 +444,7 @@ func (s *ProxyServer) RegisterTarget(info types.TargetInfo) {
 		}
 		uls := &udpListenerState{
 			listenConn:   pc.(*net.UDPConn),
+			listenPort:   m.ListenPort,
 			targetPort:   m.TargetPort,
 			info:         info,
 			idleTimeout:  info.IdleTimeout,
@@ -634,7 +647,7 @@ func (s *ProxyServer) checkInactivity(ctx context.Context) {
 					uls.running = false
 				}
 				if e.webhookURL != "" {
-					go s.fireWebhook(e.webhookURL, "container_stopped", e.containerID, e.name, "", "", 0)
+					go s.fireWebhook(e.webhookURL, webhookPayload{Event: "container_stopped", ContainerID: e.containerID, ContainerName: e.name})
 				}
 				if len(e.info.Dependants) > 0 {
 					go s.cascadeStop(e.info)
@@ -773,10 +786,37 @@ func (s *ProxyServer) handleConn(conn net.Conn, ts *targetState) {
 	remoteIP, remotePortStr, _ := net.SplitHostPort(conn.RemoteAddr().String())
 	remotePort, _ := strconv.Atoi(remotePortStr)
 	connID := newConnectionID()
+	startedAt := time.Now()
+	var upstreamAddr string
+	var bytesSent, bytesReceived int64
 	if ts.info.WebhookURL != "" {
-		go s.fireWebhook(ts.info.WebhookURL, "tcp_conn_start", ts.info.ContainerID, ts.info.ContainerName, connID, remoteIP, remotePort)
+		go s.fireWebhook(ts.info.WebhookURL, webhookPayload{
+			Event:         "tcp_conn_start",
+			ConnectionID:  connID,
+			RemoteAddr:    remoteIP,
+			RemotePort:    remotePort,
+			ContainerID:   ts.info.ContainerID,
+			ContainerName: ts.info.ContainerName,
+			ListenPort:    ts.listenPort,
+			StartedAt:     startedAt.UTC().Format(time.RFC3339),
+		})
 		defer func() {
-			go s.fireWebhook(ts.info.WebhookURL, "tcp_conn_end", ts.info.ContainerID, ts.info.ContainerName, connID, remoteIP, remotePort)
+			endedAt := time.Now()
+			go s.fireWebhook(ts.info.WebhookURL, webhookPayload{
+				Event:         "tcp_conn_end",
+				ConnectionID:  connID,
+				RemoteAddr:    remoteIP,
+				RemotePort:    remotePort,
+				ContainerID:   ts.info.ContainerID,
+				ContainerName: ts.info.ContainerName,
+				ListenPort:    ts.listenPort,
+				UpstreamAddr:  upstreamAddr,
+				StartedAt:     startedAt.UTC().Format(time.RFC3339),
+				EndedAt:       endedAt.UTC().Format(time.RFC3339),
+				DurationMs:    endedAt.Sub(startedAt).Milliseconds(),
+				BytesSent:     bytesSent,
+				BytesReceived: bytesReceived,
+			})
 		}()
 	}
 
@@ -791,7 +831,7 @@ func (s *ProxyServer) handleConn(conn net.Conn, ts *targetState) {
 		return
 	}
 	if ts.info.WebhookURL != "" {
-		go s.fireWebhook(ts.info.WebhookURL, "container_started", ts.info.ContainerID, ts.info.ContainerName, "", "", 0)
+		go s.fireWebhook(ts.info.WebhookURL, webhookPayload{Event: "container_started", ContainerID: ts.info.ContainerID, ContainerName: ts.info.ContainerName})
 	}
 
 	// Determine preferred network hint (first network ID in list; unused in k8s mode)
@@ -843,6 +883,7 @@ func (s *ProxyServer) handleConn(conn net.Conn, ts *targetState) {
 		log.Printf("proxy: exhausted retries connecting to \033[33m%s\033[0m: %v", ts.info.ContainerName, lastErr)
 		return
 	}
+	upstreamAddr = upstream.RemoteAddr().String()
 	defer upstream.Close() //nolint:errcheck
 
 	defer func() { ts.lastActive = time.Now() }()
@@ -864,7 +905,7 @@ func (s *ProxyServer) handleConn(conn net.Conn, ts *targetState) {
 		defer wg.Done()
 		buf := copyBufPool.Get().(*[]byte)
 		defer copyBufPool.Put(buf)
-		io.CopyBuffer(upstream, conn, *buf) //nolint:errcheck
+		io.CopyBuffer(countingWriter{upstream, &bytesSent}, conn, *buf) //nolint:errcheck
 		closeAll()
 	}()
 
@@ -872,7 +913,7 @@ func (s *ProxyServer) handleConn(conn net.Conn, ts *targetState) {
 		defer wg.Done()
 		buf := copyBufPool.Get().(*[]byte)
 		defer copyBufPool.Put(buf)
-		io.CopyBuffer(conn, upstream, *buf) //nolint:errcheck
+		io.CopyBuffer(countingWriter{conn, &bytesReceived}, upstream, *buf) //nolint:errcheck
 		closeAll()
 	}()
 

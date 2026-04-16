@@ -22,16 +22,21 @@ const udpReadinessInterval = 500 * time.Millisecond
 
 // udpFlow represents one active client→container UDP flow.
 type udpFlow struct {
-	clientAddr   *net.UDPAddr
-	upstreamConn *net.UDPConn
-	lastActive   time.Time
-	connectionID string // UUID v4 correlating udp_flow_start and udp_flow_end events
+	clientAddr    *net.UDPAddr
+	upstreamConn  *net.UDPConn
+	lastActive    time.Time
+	connectionID  string    // UUID v4 correlating udp_flow_start and udp_flow_end events
+	startedAt     time.Time // when the flow was registered
+	upstreamAddr  string    // upstream host:port dialled
+	bytesSent     int64     // client→upstream bytes; updated via atomic ops
+	bytesReceived int64     // upstream→client bytes; updated via atomic ops
 }
 
 // udpListenerState holds the shared inbound UDP socket and all active flows
 // for a single UDP listen-port → container-port mapping.
 type udpListenerState struct {
 	listenConn  *net.UDPConn
+	listenPort  int
 	targetPort  int
 	info        types.TargetInfo
 	lastActive  time.Time
@@ -94,8 +99,10 @@ func (s *ProxyServer) udpReadLoop(uls *udpListenerState) {
 		conn := flow.upstreamConn
 		uls.mu.Unlock()
 
-		if _, err := conn.Write(data); err != nil {
-			log.Printf("proxy: udp: write to upstream for \033[33m%s\033[0m failed: %v", uls.info.ContainerName, err)
+		written, werr := conn.Write(data)
+		atomic.AddInt64(&flow.bytesSent, int64(written))
+		if werr != nil {
+			log.Printf("proxy: udp: write to upstream for \033[33m%s\033[0m failed: %v", uls.info.ContainerName, werr)
 		}
 	}
 }
@@ -189,6 +196,7 @@ func (s *ProxyServer) startUDPFlow(uls *udpListenerState, clientAddr *net.UDPAdd
 
 		buf := make([]byte, udpBufSize)
 		responded := false
+		var firstRespSize int
 		for attempt := 1; attempt <= retries; attempt++ {
 			if _, err := upstreamConn.Write(firstDatagram); err != nil {
 				log.Printf("proxy: udp: write first datagram to \033[33m%s\033[0m failed: %v", uls.info.ContainerName, err)
@@ -207,6 +215,7 @@ func (s *ProxyServer) startUDPFlow(uls *udpListenerState, clientAddr *net.UDPAdd
 				if _, werr := uls.listenConn.WriteToUDP(buf[:n], clientAddr); werr != nil {
 					log.Printf("proxy: udp: write initial response to \033[36m%s\033[0m failed: %v", clientAddr, werr)
 				}
+				firstRespSize = n
 				responded = true
 				break
 			}
@@ -250,11 +259,16 @@ func (s *ProxyServer) startUDPFlow(uls *udpListenerState, clientAddr *net.UDPAdd
 
 		// Leader succeeded: register flow and start upstream read loop.
 		connID := newConnectionID()
+		flowStartedAt := time.Now()
 		flow := &udpFlow{
-			clientAddr:   clientAddr,
-			upstreamConn: upstreamConn,
-			lastActive:   time.Now(),
-			connectionID: connID,
+			clientAddr:    clientAddr,
+			upstreamConn:  upstreamConn,
+			lastActive:    flowStartedAt,
+			connectionID:  connID,
+			startedAt:     flowStartedAt,
+			upstreamAddr:  upstreamAddr.String(),
+			bytesSent:     int64(len(firstDatagram)),
+			bytesReceived: int64(firstRespSize),
 		}
 		uls.mu.Lock()
 		delete(uls.pending, key)
@@ -262,7 +276,16 @@ func (s *ProxyServer) startUDPFlow(uls *udpListenerState, clientAddr *net.UDPAdd
 		uls.lastActive = time.Now()
 		uls.mu.Unlock()
 		if uls.info.WebhookURL != "" {
-			go s.fireWebhook(uls.info.WebhookURL, "udp_flow_start", uls.info.ContainerID, uls.info.ContainerName, connID, clientAddr.IP.String(), clientAddr.Port)
+			go s.fireWebhook(uls.info.WebhookURL, webhookPayload{
+				Event:         "udp_flow_start",
+				ConnectionID:  connID,
+				RemoteAddr:    clientAddr.IP.String(),
+				RemotePort:    clientAddr.Port,
+				ContainerID:   uls.info.ContainerID,
+				ContainerName: uls.info.ContainerName,
+				ListenPort:    uls.listenPort,
+				StartedAt:     flowStartedAt.UTC().Format(time.RFC3339),
+			})
 		}
 		uls.activeFlows.Add(1)
 		go s.udpUpstreamReadLoop(uls, flow)
@@ -295,11 +318,20 @@ func (s *ProxyServer) startUDPFlow(uls *udpListenerState, clientAddr *net.UDPAdd
 	}
 	// Register flow even if no immediate response (fire-and-forget protocols).
 	connID := newConnectionID()
+	flowStartedAt := time.Now()
+	nonLeaderRespSize := 0
+	if readErr == nil {
+		nonLeaderRespSize = n
+	}
 	flow := &udpFlow{
-		clientAddr:   clientAddr,
-		upstreamConn: upstreamConn,
-		lastActive:   time.Now(),
-		connectionID: connID,
+		clientAddr:    clientAddr,
+		upstreamConn:  upstreamConn,
+		lastActive:    flowStartedAt,
+		connectionID:  connID,
+		startedAt:     flowStartedAt,
+		upstreamAddr:  upstreamAddr.String(),
+		bytesSent:     int64(len(firstDatagram)),
+		bytesReceived: int64(nonLeaderRespSize),
 	}
 	uls.mu.Lock()
 	delete(uls.pending, key)
@@ -307,7 +339,16 @@ func (s *ProxyServer) startUDPFlow(uls *udpListenerState, clientAddr *net.UDPAdd
 	uls.lastActive = time.Now()
 	uls.mu.Unlock()
 	if uls.info.WebhookURL != "" {
-		go s.fireWebhook(uls.info.WebhookURL, "udp_flow_start", uls.info.ContainerID, uls.info.ContainerName, connID, clientAddr.IP.String(), clientAddr.Port)
+		go s.fireWebhook(uls.info.WebhookURL, webhookPayload{
+			Event:         "udp_flow_start",
+			ConnectionID:  connID,
+			RemoteAddr:    clientAddr.IP.String(),
+			RemotePort:    clientAddr.Port,
+			ContainerID:   uls.info.ContainerID,
+			ContainerName: uls.info.ContainerName,
+			ListenPort:    uls.listenPort,
+			StartedAt:     flowStartedAt.UTC().Format(time.RFC3339),
+		})
 	}
 	uls.activeFlows.Add(1)
 	go s.udpUpstreamReadLoop(uls, flow)
@@ -323,6 +364,7 @@ func (s *ProxyServer) udpUpstreamReadLoop(uls *udpListenerState, flow *udpFlow) 
 		if err != nil {
 			return // conn closed by sweeper or removal
 		}
+		atomic.AddInt64(&flow.bytesReceived, int64(n))
 		if _, err := uls.listenConn.WriteToUDP(buf[:n], flow.clientAddr); err != nil {
 			log.Printf("proxy: udp: write response to client \033[36m%s\033[0m failed: %v", flow.clientAddr, err)
 		}
@@ -359,7 +401,26 @@ func (s *ProxyServer) udpFlowSweeper(ctx context.Context, uls *udpListenerState,
 					if uls.info.WebhookURL != "" {
 						connID := flow.connectionID
 						clientAddr := flow.clientAddr
-						go s.fireWebhook(uls.info.WebhookURL, "udp_flow_end", uls.info.ContainerID, uls.info.ContainerName, connID, clientAddr.IP.String(), clientAddr.Port)
+						flowAddr := flow.upstreamAddr
+						sa := flow.startedAt
+						bs := atomic.LoadInt64(&flow.bytesSent)
+						br := atomic.LoadInt64(&flow.bytesReceived)
+						endedAt := now
+						go s.fireWebhook(uls.info.WebhookURL, webhookPayload{
+							Event:         "udp_flow_end",
+							ConnectionID:  connID,
+							RemoteAddr:    clientAddr.IP.String(),
+							RemotePort:    clientAddr.Port,
+							ContainerID:   uls.info.ContainerID,
+							ContainerName: uls.info.ContainerName,
+							ListenPort:    uls.listenPort,
+							UpstreamAddr:  flowAddr,
+							StartedAt:     sa.UTC().Format(time.RFC3339),
+							EndedAt:       endedAt.UTC().Format(time.RFC3339),
+							DurationMs:    endedAt.Sub(sa).Milliseconds(),
+							BytesSent:     bs,
+							BytesReceived: br,
+						})
 					}
 				}
 			}
