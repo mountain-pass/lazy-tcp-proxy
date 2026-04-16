@@ -2,7 +2,7 @@
 
 **Requirement**: [2026-04-16-webhook-usage-metrics.md](2026-04-16-webhook-usage-metrics.md)
 **Date**: 2026-04-16
-**Status**: Draft
+**Status**: Implemented
 
 ## Implementation Steps
 
