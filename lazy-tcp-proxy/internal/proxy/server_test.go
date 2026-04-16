@@ -559,13 +559,14 @@ func (m *mockBackend) WaitUntilHealthy(_ context.Context, _, _ string, _ time.Du
 
 func newTestServer() *ProxyServer {
 	return &ProxyServer{
-		ctx:          context.Background(),
-		targets:      make(map[int]*targetState),
-		udpTargets:   make(map[int]*udpListenerState),
-		nameToID:     make(map[string]string),
-		idleTimeout:  5 * time.Minute,
-		pollInterval: 15 * time.Second,
-		startTime:    time.Now().Add(-1 * time.Hour),
+		ctx:             context.Background(),
+		targets:         make(map[int]*targetState),
+		udpTargets:      make(map[int]*udpListenerState),
+		nameToID:        make(map[string]string),
+		dependantStates: make(map[string]*dependantState),
+		idleTimeout:     5 * time.Minute,
+		pollInterval:    15 * time.Second,
+		startTime:       time.Now().Add(-1 * time.Hour),
 	}
 }
 
@@ -742,6 +743,77 @@ func TestCascadeStop_TriggeredByCheckInactivity(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Error("chrome was not cascade-stopped")
+	}
+}
+
+// populateCascadeTargetsPortless sets up hub (port-bearing) → ollama (port-less, cascade-only).
+func populateCascadeTargetsPortless(s *ProxyServer, hubRunning, ollamaRunning bool) {
+	hubInfo := types.TargetInfo{
+		ContainerID:   "hub-id",
+		ContainerName: "hub",
+		Running:       hubRunning,
+		Dependants:    []string{"ollama"},
+	}
+	s.targets[9000] = &targetState{
+		info:       hubInfo,
+		targetPort: 8080,
+		running:    hubRunning,
+		lastActive: time.Now().Add(-10 * time.Minute),
+	}
+	s.nameToID["hub"] = "hub-id"
+	s.nameToID["ollama"] = "ollama-id"
+	s.dependantStates["ollama-id"] = &dependantState{
+		containerName: "ollama",
+		running:       ollamaRunning,
+	}
+}
+
+func TestCascadeStop_StopsPortlessDependant(t *testing.T) {
+	stopped := make(chan string, 2)
+	s := newTestServerWithStopper(func(id string) { stopped <- id })
+	populateCascadeTargetsPortless(s, true, true) // hub idle, ollama running
+
+	s.checkInactivity(context.Background())
+
+	// hub stopped first (synchronous).
+	select {
+	case id := <-stopped:
+		if id != "hub-id" {
+			t.Errorf("expected hub-id stopped first, got %s", id)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("hub was not stopped")
+	}
+	// ollama cascade-stopped in a goroutine.
+	select {
+	case id := <-stopped:
+		if id != "ollama-id" {
+			t.Errorf("expected ollama-id cascade-stopped, got %s", id)
+		}
+	case <-time.After(time.Second):
+		t.Error("ollama was not cascade-stopped")
+	}
+}
+
+func TestCascadeStop_SkipsAlreadyStoppedPortlessDependant(t *testing.T) {
+	stopped := make(chan string, 2)
+	s := newTestServerWithStopper(func(id string) { stopped <- id })
+	populateCascadeTargetsPortless(s, true, false) // hub idle, ollama already stopped
+
+	s.checkInactivity(context.Background())
+
+	// hub stops.
+	select {
+	case <-stopped:
+	case <-time.After(time.Second):
+		t.Fatal("hub was not stopped")
+	}
+	// ollama should NOT be stopped again.
+	time.Sleep(50 * time.Millisecond)
+	select {
+	case id := <-stopped:
+		t.Errorf("StopContainer should not have been called for already-stopped ollama; got %s", id)
+	default:
 	}
 }
 

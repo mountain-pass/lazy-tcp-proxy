@@ -248,9 +248,6 @@ func (b *Backend) deploymentToTargetInfo(d appsv1.Deployment) (types.TargetInfo,
 
 	portsStr := ann["lazy-tcp-proxy.ports"]
 	udpPortsStr := ann["lazy-tcp-proxy.udp-ports"]
-	if portsStr == "" && udpPortsStr == "" {
-		return types.TargetInfo{}, fmt.Errorf("missing annotation lazy-tcp-proxy.ports or lazy-tcp-proxy.udp-ports")
-	}
 	var ports []types.PortMapping
 	if portsStr != "" {
 		ports = types.ParsePortMappings("lazy-tcp-proxy.ports", portsStr)

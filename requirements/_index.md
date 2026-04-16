@@ -67,3 +67,4 @@
 | REQ-063 | HTTP Health Check Label for Container Readiness                          | Medium | Completed   | 2026-04-14 | [2026-04-14-http-health-check.md](2026-04-14-http-health-check.md) |
 | REQ-064 | Docker HEALTHCHECK Readiness Gate                                        | Medium | Completed   | 2026-04-15 | [2026-04-15-docker-healthcheck-readiness.md](2026-04-15-docker-healthcheck-readiness.md) |
 | REQ-065 | Webhook Usage Metrics (bytes, duration, port)                            | Medium | Completed   | 2026-04-16 | [2026-04-16-webhook-usage-metrics.md](2026-04-16-webhook-usage-metrics.md) |
+| REQ-066 | Make ports/udp-ports Labels Optional (Cascade-Only Registration)         | Medium | Completed   | 2026-04-16 | [2026-04-16-auto-register-unlabeled-dependants.md](2026-04-16-auto-register-unlabeled-dependants.md) |

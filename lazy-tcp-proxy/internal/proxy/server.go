@@ -90,6 +90,13 @@ var copyBufPool = sync.Pool{
 	},
 }
 
+// dependantState tracks running state for containers registered with no proxy ports.
+// These containers participate only in cascade start/stop.
+type dependantState struct {
+	containerName string
+	running       bool
+}
+
 // targetState holds runtime state for a single listen-port→container-port mapping.
 type targetState struct {
 	info            types.TargetInfo
@@ -162,7 +169,8 @@ type ProxyServer struct {
 	mu            sync.RWMutex
 	targets       map[int]*targetState     // keyed by TCP listen port
 	udpTargets    map[int]*udpListenerState // keyed by UDP listen port
-	nameToID      map[string]string        // ContainerName → ContainerID for cascade lookup
+	nameToID        map[string]string        // ContainerName → ContainerID for cascade lookup
+	dependantStates map[string]*dependantState // containerID → state for port-less containers
 	pollInterval  time.Duration
 	idleTimeout   time.Duration
 	startTimeout  time.Duration
@@ -177,9 +185,10 @@ func NewServer(ctx context.Context, b containerBackend, startTime time.Time, idl
 	return &ProxyServer{
 		backend:       b,
 		ctx:           ctx,
-		targets:       make(map[int]*targetState),
-		udpTargets:    make(map[int]*udpListenerState),
-		nameToID:      make(map[string]string),
+		targets:         make(map[int]*targetState),
+		udpTargets:      make(map[int]*udpListenerState),
+		nameToID:        make(map[string]string),
+		dependantStates: make(map[string]*dependantState),
 		idleTimeout:   idleTimeout,
 		startTimeout:  startTimeout,
 		pollInterval:  pollInterval,
@@ -463,6 +472,21 @@ func (s *ProxyServer) RegisterTarget(info types.TargetInfo) {
 	// Keep name→ID map current for cascade lookups.
 	s.nameToID[info.ContainerName] = info.ContainerID
 
+	// Port-less containers: track running state in dependantStates; no listeners opened.
+	if len(info.Ports) == 0 && len(info.UDPPorts) == 0 {
+		if existing, ok := s.dependantStates[info.ContainerID]; ok {
+			existing.containerName = info.ContainerName
+			existing.running = info.Running
+			log.Printf("proxy: updated target \033[33m%s\033[0m (cascade-only, no ports)", info.ContainerName)
+		} else {
+			s.dependantStates[info.ContainerID] = &dependantState{
+				containerName: info.ContainerName,
+				running:       info.Running,
+			}
+			log.Printf("proxy: registered target \033[33m%s\033[0m (cascade-only, no ports)", info.ContainerName)
+		}
+	}
+
 	// Register with cron scheduler if any schedule is set.
 	if s.sched != nil && (info.CronStart != "" || info.CronStop != "") {
 		s.sched.Register(info)
@@ -496,6 +520,11 @@ func (s *ProxyServer) RemoveTarget(containerID string) {
 			delete(s.udpTargets, port)
 		}
 	}
+	if ds, ok := s.dependantStates[containerID]; ok {
+		log.Printf("proxy: removing target \033[33m%s\033[0m (cascade-only)", ds.containerName)
+		delete(s.nameToID, ds.containerName)
+		delete(s.dependantStates, containerID)
+	}
 	if s.sched != nil {
 		s.sched.Unregister(containerID)
 	}
@@ -519,6 +548,9 @@ func (s *ProxyServer) ContainerStopped(containerID string) {
 			info = uls.info
 			affectedULS = append(affectedULS, uls)
 		}
+	}
+	if ds, ok := s.dependantStates[containerID]; ok {
+		ds.running = false
 	}
 	s.mu.RUnlock()
 	// Reset upstream readiness state so the next cold start re-probes.
@@ -547,6 +579,9 @@ func (s *ProxyServer) ContainerStarted(containerID string) {
 			info = ts.info
 			break
 		}
+	}
+	if ds, ok := s.dependantStates[containerID]; ok {
+		ds.running = true
 	}
 	s.mu.RUnlock()
 	if len(info.Dependants) > 0 {
@@ -956,6 +991,9 @@ func (s *ProxyServer) cascadeStart(upstream types.TargetInfo) {
 				uls.running = true
 			}
 		}
+		if ds, ok := s.dependantStates[depID]; ok {
+			ds.running = true
+		}
 		s.mu.RUnlock()
 	}
 }
@@ -979,6 +1017,11 @@ func (s *ProxyServer) cascadeStop(upstream types.TargetInfo) {
 					running = true
 					break
 				}
+			}
+		}
+		if !running {
+			if ds, ok := s.dependantStates[depID]; ok && ds.running {
+				running = true
 			}
 		}
 		s.mu.RUnlock()
@@ -1007,6 +1050,9 @@ func (s *ProxyServer) cascadeStop(upstream types.TargetInfo) {
 			if uls.info.ContainerID == depID {
 				uls.running = false
 			}
+		}
+		if ds, ok := s.dependantStates[depID]; ok {
+			ds.running = false
 		}
 		s.mu.RUnlock()
 	}
