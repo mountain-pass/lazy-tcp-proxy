@@ -333,6 +333,10 @@ func (m *Manager) Shutdown(ctx context.Context) {
 	m.LeaveNetworks(ctx)
 }
 
+// DefaultTargetID returns name as-is. The Docker API accepts container names
+// wherever container IDs are expected, so no lookup is required.
+func (m *Manager) DefaultTargetID(name string) string { return name }
+
 // warnSharedDefaultNetworks logs a warning if any of the container's networks is a
 // Docker Compose default network that the proxy is already a member of. This situation
 // means that running "docker compose down" on the proxy stack will delete the shared
