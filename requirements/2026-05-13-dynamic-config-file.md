@@ -25,12 +25,7 @@ no way to manage these through the proxy.
    the YAML file (matched by `name`), the YAML config takes **full precedence** for the entire
    service entry. Label/annotation values are completely disregarded for that container.
 
-3. **New static targets** — the YAML config may define services with a `host` field that point
-   to non-container targets (bare-metal hosts, remote IPs, etc.).
-   Static targets are always treated as "running" — the proxy forwards directly without starting
-   any container.
-
-4. **Admin HTTP server** — a second HTTP server on a dedicated port exposes a small management API.
+3. **Admin HTTP server** — a second HTTP server on a dedicated port exposes a small management API.
    - Port configurable via `ADMIN_PORT` env var (default: `8081`; set to `0` to disable).
    - Protected by an API key supplied via `ADMIN_API_KEY` env var.
    - If `ADMIN_PORT` is non-zero and `ADMIN_API_KEY` is empty, the server refuses to start and
@@ -47,8 +42,9 @@ no way to manage these through the proxy.
 6. **Config loaded at startup** — the YAML file is applied immediately after the first backend
    `Discover()` call, before any proxy listeners are opened.
 
-7. **Applies to all backends** — Docker and Kubernetes. Docker Swarm scale-to-zero support is
-   a separate future requirement (it requires a dedicated Swarm backend).
+7. **Applies to all backends** — Docker and Kubernetes. Docker Swarm scale-to-zero (scaling
+   Swarm services to 0 replicas and back) is a separate future requirement; it requires a
+   dedicated Swarm backend that calls `docker service scale` rather than `docker container start`.
 
 ## User Experience Requirements
 
@@ -67,8 +63,6 @@ no way to manage these through the proxy.
 - API key passed via `X-API-Key` HTTP header.
 - Config reload is synchronous from the caller's perspective (the HTTP response returns only after
   the proxy has been updated).
-- Static targets (`host` field set) skip the container-start logic and are assumed always
-  reachable.
 - `name` is the join key between YAML entries and backend-discovered containers (matches
   `ContainerName` for Docker, pod/service name for Kubernetes).
 - Port mappings use the same `"listen:target"` string format as Docker labels (e.g. `"9000:80"`).
@@ -79,7 +73,6 @@ no way to manage these through the proxy.
 # /etc/lazy-tcp-proxy/config.yaml
 services:
   - name: "my-container"          # required; matches container/pod name
-    host: "192.168.1.100"         # optional; static target — bypasses container start logic
     ports:
       - "9000:80"
     udp_ports:
@@ -108,7 +101,6 @@ the entire YAML entry replaces that container's label-derived config (no label f
 - [ ] YAML config is applied after first `Discover()` at startup.
 - [ ] A container present in both labels and YAML: YAML entry fully replaces label-derived config (no fallthrough).
 - [ ] A service with only a YAML entry (no Docker label / K8s annotation) is registered and proxied.
-- [ ] A static-host (`host:`) YAML entry never triggers a container start; connections are forwarded immediately.
 - [ ] `GET /config` returns current config as JSON (requires valid `X-API-Key` header).
 - [ ] `GET /config/reload` re-reads YAML, re-applies, and returns success/error JSON (requires auth).
 - [ ] `PUT /config/update` accepts JSON, writes YAML file, reloads, and returns success/error JSON (requires auth).
@@ -122,15 +114,14 @@ the entire YAML entry replaces that container's label-derived config (no label f
 ## Dependencies
 
 - Depends on: REQ-001 (core proxy), REQ-025 (HTTP status endpoint), REQ-038/REQ-049 (K8s backend)
-- Future: Docker Swarm scale-to-zero (separate requirement — needs dedicated Swarm backend)
+- Future: Docker Swarm scale-to-zero — separate requirement; needs a dedicated Swarm backend
+  that calls `docker service scale` and resolves Swarm service VIPs/DNS within overlay networks.
 - Affects: `main.go`, `internal/types/types.go`, `internal/proxy/server.go`, `internal/docker/manager.go`, `internal/k8s/backend.go`
 
 ## Implementation Notes
 
 - New package: `internal/config` — YAML store, merge logic, validation.
 - New package: `internal/admin` — admin HTTP server, auth middleware, handlers.
-- `TargetInfo` gains a `StaticHost string` field; when non-empty, `ProxyServer` resolves the target
-  address directly rather than asking the backend to start a container.
 - Merge order: (1) discover from backend → (2) for each YAML entry, if `name` matches a discovered
   container replace it entirely; if no match, add as new entry → (3) call `srv.Update()`.
 - The admin server's reload handler re-runs steps 1–3 (calls `Discover()` then applies config).
