@@ -24,12 +24,12 @@ func newTestManagerWithStatuses(t *testing.T, containerID string, statuses []str
 			idx = len(statuses) - 1
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"Id":%q,"State":{"Status":"running","Running":true,"Health":{"Status":%q,"FailingStreak":0,"Log":[]}},"Config":{},"HostConfig":{"LogConfig":{"Type":"json-file","Config":{}}},"NetworkSettings":{"Networks":{}}}`,
+		fmt.Fprintf(w, `{"Id":%q,"State":{"Status":"running","Running":true,"Health":{"Status":%q,"FailingStreak":0,"Log":[]}},"Config":{},"HostConfig":{"LogConfig":{"Type":"json-file","Config":{}}},"NetworkSettings":{"Networks":{}}}`, //nolint:errcheck
 			containerID, statuses[idx])
 	}))
-	cli, err := client.NewClientWithOpts(
+	cli, err := client.New(
 		client.WithHost(srv.URL),
-		client.WithVersion("1.41"),
+		client.WithAPIVersion("1.41"),
 	)
 	if err != nil {
 		srv.Close()
