@@ -66,3 +66,4 @@
 | REQ-062 | Wire START_TIMEOUT_SECS to TCP Dial Retry Loop                           | Medium | Completed   | 2026-04-14 | [2026-04-14-wire-start-timeout-tcp.md](2026-04-14-wire-start-timeout-tcp.md) |
 | REQ-063 | HTTP Health Check Label for Container Readiness                          | Medium | Completed   | 2026-04-14 | [2026-04-14-http-health-check.md](2026-04-14-http-health-check.md) |
 | REQ-064 | Docker HEALTHCHECK Readiness Gate                                        | Medium | Completed   | 2026-04-15 | [2026-04-15-docker-healthcheck-readiness.md](2026-04-15-docker-healthcheck-readiness.md) |
+| REQ-065 | Dynamic Configuration File (YAML Override Store)                         | High   | Planned     | 2026-05-13 | [2026-05-13-dynamic-config-file.md](2026-05-13-dynamic-config-file.md) |
