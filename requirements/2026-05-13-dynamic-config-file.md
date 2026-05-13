@@ -17,16 +17,16 @@ no way to manage these through the proxy.
 ## Functional Requirements
 
 1. **YAML config file** — a structured file on disk that defines per-service proxy configuration.
-   - Path configurable via `DYNAMIC_CONFIG_PATH` env var.
+   - Path configurable via `CONFIG_PATH` env var.
    - Default path: `/etc/lazy-tcp-proxy/config.yaml`.
    - If the file does not exist at startup, create an empty placeholder and log the action.
 
 2. **YAML wins** — for any container/pod that appears in both the backend labels/annotations and
-   the YAML file (matched by `name`), the YAML config takes full precedence for every field it
-   specifies. Fields absent from the YAML entry fall through to the label value.
+   the YAML file (matched by `name`), the YAML config takes **full precedence** for the entire
+   service entry. Label/annotation values are completely disregarded for that container.
 
 3. **New static targets** — the YAML config may define services with a `host` field that point
-   to non-container targets (bare-metal hosts, remote IPs, Docker Swarm services, etc.).
+   to non-container targets (bare-metal hosts, remote IPs, etc.).
    Static targets are always treated as "running" — the proxy forwards directly without starting
    any container.
 
@@ -47,8 +47,8 @@ no way to manage these through the proxy.
 6. **Config loaded at startup** — the YAML file is applied immediately after the first backend
    `Discover()` call, before any proxy listeners are opened.
 
-7. **Applies to all backends** — Docker, Kubernetes, and (via static `host` entries) Docker
-   Swarm stacks or any other host.
+7. **Applies to all backends** — Docker and Kubernetes. Docker Swarm scale-to-zero support is
+   a separate future requirement (it requires a dedicated Swarm backend).
 
 ## User Experience Requirements
 
@@ -71,6 +71,7 @@ no way to manage these through the proxy.
   reachable.
 - `name` is the join key between YAML entries and backend-discovered containers (matches
   `ContainerName` for Docker, pod/service name for Kubernetes).
+- Port mappings use the same `"listen:target"` string format as Docker labels (e.g. `"9000:80"`).
 
 ## YAML Schema
 
@@ -78,14 +79,11 @@ no way to manage these through the proxy.
 # /etc/lazy-tcp-proxy/config.yaml
 services:
   - name: "my-container"          # required; matches container/pod name
-    # host is optional; if omitted the existing Docker/K8s container is used
-    # host: "192.168.1.100"       # static target — bypasses container start logic
+    host: "192.168.1.100"         # optional; static target — bypasses container start logic
     ports:
-      - listen: 9000
-        target: 80
+      - "9000:80"
     udp_ports:
-      - listen: 5353
-        target: 53
+      - "5353:53"
     allow_list:
       - "192.168.0.0/24"
     block_list:
@@ -100,16 +98,17 @@ services:
     http_healthcheck: "http://{{container}}:8080/health"
 ```
 
-All fields except `name` are optional. Omitting a field means "keep the label/annotation value
-for that field" (or no value if there is no label either).
+All fields except `name` are optional. When a `name` matches a backend-discovered container,
+the entire YAML entry replaces that container's label-derived config (no label fallthrough).
 
 ## Acceptance Criteria
 
-- [ ] If `DYNAMIC_CONFIG_PATH` file does not exist, proxy creates an empty placeholder and logs a warning.
+- [ ] If `CONFIG_PATH` file does not exist, proxy creates an empty placeholder and logs a warning.
+- [ ] `CONFIG_PATH` env var overrides the default `/etc/lazy-tcp-proxy/config.yaml`.
 - [ ] YAML config is applied after first `Discover()` at startup.
-- [ ] A container present in both labels and YAML: YAML fields override label fields for the same service.
+- [ ] A container present in both labels and YAML: YAML entry fully replaces label-derived config (no fallthrough).
 - [ ] A service with only a YAML entry (no Docker label / K8s annotation) is registered and proxied.
-- [ ] A static-host YAML entry never triggers a container start; connections are forwarded immediately.
+- [ ] A static-host (`host:`) YAML entry never triggers a container start; connections are forwarded immediately.
 - [ ] `GET /config` returns current config as JSON (requires valid `X-API-Key` header).
 - [ ] `GET /config/reload` re-reads YAML, re-applies, and returns success/error JSON (requires auth).
 - [ ] `PUT /config/update` accepts JSON, writes YAML file, reloads, and returns success/error JSON (requires auth).
@@ -118,10 +117,12 @@ for that field" (or no value if there is no label either).
 - [ ] Admin server logs an error and exits if `ADMIN_PORT` > 0 and `ADMIN_API_KEY` is empty.
 - [ ] Invalid YAML/JSON on `PUT /config/update` returns `400 Bad Request` with a description; existing config is unchanged.
 - [ ] Invalid service entry (e.g. bad port mapping) is rejected per-entry with a log warning; valid entries are still applied.
+- [ ] Port strings use `"listen:target"` format, consistent with Docker labels.
 
 ## Dependencies
 
 - Depends on: REQ-001 (core proxy), REQ-025 (HTTP status endpoint), REQ-038/REQ-049 (K8s backend)
+- Future: Docker Swarm scale-to-zero (separate requirement — needs dedicated Swarm backend)
 - Affects: `main.go`, `internal/types/types.go`, `internal/proxy/server.go`, `internal/docker/manager.go`, `internal/k8s/backend.go`
 
 ## Implementation Notes
@@ -130,6 +131,7 @@ for that field" (or no value if there is no label either).
 - New package: `internal/admin` — admin HTTP server, auth middleware, handlers.
 - `TargetInfo` gains a `StaticHost string` field; when non-empty, `ProxyServer` resolves the target
   address directly rather than asking the backend to start a container.
-- Merge order: (1) discover from backend → (2) apply YAML overrides → (3) add YAML-only entries →
-  (4) call `srv.Update()`.
-- The admin server's reload handler re-runs steps 1–4 (calls `Discover()` then applies config).
+- Merge order: (1) discover from backend → (2) for each YAML entry, if `name` matches a discovered
+  container replace it entirely; if no match, add as new entry → (3) call `srv.Update()`.
+- The admin server's reload handler re-runs steps 1–3 (calls `Discover()` then applies config).
+- Existing `ParsePortMappings()` in `internal/types/types.go` can be reused for YAML port strings.
