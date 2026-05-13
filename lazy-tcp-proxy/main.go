@@ -12,6 +12,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/mountain-pass/lazy-tcp-proxy/internal/admin"
+	"github.com/mountain-pass/lazy-tcp-proxy/internal/config"
 	"github.com/mountain-pass/lazy-tcp-proxy/internal/proxy"
 	"github.com/mountain-pass/lazy-tcp-proxy/internal/scheduler"
 	"github.com/mountain-pass/lazy-tcp-proxy/internal/types"
@@ -75,6 +77,29 @@ func resolveStatusPort() int {
 		return defaultStatusPort
 	}
 	return n // 0 means disabled
+}
+
+const defaultAdminPort = 8081
+const defaultConfigPath = "/etc/lazy-tcp-proxy/config.yaml"
+
+func resolveAdminPort() int {
+	raw := os.Getenv("ADMIN_PORT")
+	if raw == "" {
+		return defaultAdminPort
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 0 {
+		log.Printf("ADMIN_PORT=%q is invalid; using default %d", raw, defaultAdminPort)
+		return defaultAdminPort
+	}
+	return n // 0 means disabled
+}
+
+func resolveConfigPath() string {
+	if v := os.Getenv("CONFIG_PATH"); v != "" {
+		return v
+	}
+	return defaultConfigPath
 }
 
 const statusDashboardHTML = `<!DOCTYPE html>
@@ -250,6 +275,25 @@ type backendManager interface {
 	GetUpstreamHost(ctx context.Context, targetID, hint string) (string, error)
 	WaitUntilHealthy(ctx context.Context, containerID, name string, timeout time.Duration) error
 	Shutdown(ctx context.Context)
+	// DefaultTargetID returns a backend-appropriate container ID for a given
+	// name. Used by the config store to assign IDs to YAML-only targets.
+	// Docker: returns name as-is (Docker API accepts names). K8s: returns "namespace/name".
+	DefaultTargetID(name string) string
+}
+
+// discoverAndApply runs backend discovery, applies the YAML config overlay,
+// and updates the proxy server with the merged target list.
+func discoverAndApply(ctx context.Context, mgr backendManager, store *config.Store, srv *proxy.ProxyServer) error {
+	collector := &config.TargetCollector{}
+	if err := mgr.Discover(ctx, collector); err != nil {
+		return fmt.Errorf("discover: %w", err)
+	}
+	merged, errs := store.Apply(collector.Targets(), mgr.DefaultTargetID)
+	for _, e := range errs {
+		log.Printf("config apply warning: %v", e)
+	}
+	srv.Update(merged)
+	return nil
 }
 
 
@@ -306,13 +350,38 @@ func main() {
 		runStatusServer(ctx, srv, statusPort)
 	}
 
-	// Initial discovery of all matching targets
+	// Load dynamic config file
+	configPath := resolveConfigPath()
+	store := config.New(configPath)
+	if err := store.Load(); err != nil {
+		log.Fatalf("failed to load config file: %v", err)
+	}
+	log.Printf("config: loaded from %s (%d services)", configPath, len(store.Get().Services))
+
+	// Start the admin server (if enabled)
+	adminPort := resolveAdminPort()
+	adminKey := os.Getenv("ADMIN_API_KEY")
+	if adminPort == 0 {
+		log.Println("admin server: disabled (ADMIN_PORT=0)")
+	} else {
+		if adminKey == "" {
+			log.Fatal("ADMIN_API_KEY must be set when ADMIN_PORT is non-zero")
+		}
+		reloadFn := func(ctx context.Context) error {
+			return discoverAndApply(ctx, mgr, store, srv)
+		}
+		adminSrv := admin.New(store, reloadFn, adminKey)
+		go adminSrv.Run(ctx, adminPort)
+	}
+
+	// Initial discovery of all matching targets (with config overlay applied)
 	log.Println("performing initial target discovery...")
-	if err := mgr.Discover(ctx, srv); err != nil {
+	if err := discoverAndApply(ctx, mgr, store, srv); err != nil {
 		log.Printf("initial discovery error: %v", err)
 	}
 
-	// Watch for runtime changes
+	// Watch for runtime changes (WatchEvents calls RegisterTarget directly for
+	// label-carrying containers; the config overlay is applied on reload only).
 	go func() {
 		mgr.WatchEvents(ctx, srv)
 	}()

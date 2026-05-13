@@ -11,6 +11,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"reflect"
 	"runtime/debug"
 	"sort"
 	"strconv"
@@ -485,6 +486,67 @@ func (s *ProxyServer) RemoveTarget(containerID string) {
 	}
 	if s.sched != nil {
 		s.sched.Unregister(containerID)
+	}
+}
+
+// currentTargetsByID returns a snapshot of all currently registered targets
+// keyed by ContainerID. Multiple port mappings sharing the same ContainerID
+// produce a single entry (last writer wins, which is fine for equality checks).
+func (s *ProxyServer) currentTargetsByID() map[string]types.TargetInfo {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make(map[string]types.TargetInfo, len(s.targets)+len(s.udpTargets))
+	for _, ts := range s.targets {
+		out[ts.info.ContainerID] = ts.info
+	}
+	for _, uls := range s.udpTargets {
+		out[uls.info.ContainerID] = uls.info
+	}
+	return out
+}
+
+// targetInfoEqual reports whether two TargetInfos have identical proxy
+// configuration. Backend-managed fields (ContainerID, NetworkIDs, Running,
+// HasHealthCheck) are intentionally excluded.
+func targetInfoEqual(a, b types.TargetInfo) bool {
+	return reflect.DeepEqual(a.Ports, b.Ports) &&
+		reflect.DeepEqual(a.UDPPorts, b.UDPPorts) &&
+		reflect.DeepEqual(a.AllowList, b.AllowList) &&
+		reflect.DeepEqual(a.BlockList, b.BlockList) &&
+		reflect.DeepEqual(a.IdleTimeout, b.IdleTimeout) &&
+		reflect.DeepEqual(a.StartTimeout, b.StartTimeout) &&
+		a.WebhookURL == b.WebhookURL &&
+		reflect.DeepEqual(a.Dependants, b.Dependants) &&
+		a.CronStart == b.CronStart &&
+		a.CronStop == b.CronStop &&
+		a.HTTPHealthCheck == b.HTTPHealthCheck
+}
+
+// Update reconciles the proxy's registered targets with newTargets.
+// Targets absent from newTargets are removed; new targets are registered;
+// changed targets are re-registered (brief port-unbound window is acceptable
+// on a config reload path).
+func (s *ProxyServer) Update(newTargets []types.TargetInfo) {
+	current := s.currentTargetsByID()
+
+	newByID := make(map[string]types.TargetInfo, len(newTargets))
+	for _, t := range newTargets {
+		newByID[t.ContainerID] = t
+	}
+
+	for id := range current {
+		if _, ok := newByID[id]; !ok {
+			s.RemoveTarget(id)
+		}
+	}
+
+	for id, newInfo := range newByID {
+		if cur, exists := current[id]; !exists {
+			s.RegisterTarget(newInfo)
+		} else if !targetInfoEqual(cur, newInfo) {
+			s.RemoveTarget(id)
+			s.RegisterTarget(newInfo)
+		}
 	}
 }
 

@@ -233,6 +233,16 @@ func (b *Backend) GetUpstreamHost(_ context.Context, tid, _ string) (string, err
 // Shutdown is a no-op for the k8s backend (no network joins to undo).
 func (b *Backend) Shutdown(_ context.Context) {}
 
+// DefaultTargetID returns "namespace/name" for use as a ContainerID when a
+// YAML config entry has no matching discovered Deployment.
+func (b *Backend) DefaultTargetID(name string) string {
+	ns := b.namespace
+	if ns == "" {
+		ns = "default"
+	}
+	return ns + "/" + name
+}
+
 // WaitUntilHealthy is a no-op for the k8s backend. Kubernetes readiness is
 // managed by the cluster via readiness probes; the proxy does not poll it.
 func (b *Backend) WaitUntilHealthy(_ context.Context, _, _ string, _ time.Duration) error {
