@@ -33,8 +33,27 @@ If `ADMIN_PORT` is non-zero and `ADMIN_API_KEY` is not set, the proxy will refus
 
 By default the proxy reads `/etc/lazy-tcp-proxy/config.yaml`. Override with `CONFIG_PATH`.
 
-If the file does not exist at startup, an empty placeholder is created automatically and a
-warning is logged.
+If the file does not exist at startup, a placeholder file is created automatically and a
+warning is logged. The placeholder contains a commented-out example of every available option
+so you can uncomment and edit what you need:
+
+```yaml
+services:
+#  - name: "my-container"
+#    ports:
+#      - "9000:80"
+#    udp_ports:
+#      - "5353:53"
+#    allow_list: ["192.168.0.0/24"]
+#    block_list: ["10.0.0.1"]
+#    idle_timeout_secs: 60
+#    start_timeout_secs: 30
+#    webhook_url: "https://example.com/hook"
+#    dependants: ["other-service"]
+#    cron_start: "0 9 * * 1-5"
+#    cron_stop:  "0 17 * * 1-5"
+#    http_healthcheck: "http://{{container}}:8080/health"
+```
 
 ### Docker Compose setup
 

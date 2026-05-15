@@ -55,11 +55,26 @@ func New(path string) *Store {
 func (s *Store) Load() error {
 	data, err := os.ReadFile(s.path)
 	if os.IsNotExist(err) {
-		placeholder := []byte("services: []\n")
+		placeholder := []byte(`services:
+#  - name: "my-container"
+#    ports:
+#      - "9000:80"
+#    udp_ports:
+#      - "5353:53"
+#    allow_list: ["192.168.0.0/24"]
+#    block_list: ["10.0.0.1"]
+#    idle_timeout_secs: 60
+#    start_timeout_secs: 30
+#    webhook_url: "https://example.com/hook"
+#    dependants: ["other-service"]
+#    cron_start: "0 9 * * 1-5"
+#    cron_stop:  "0 17 * * 1-5"
+#    http_healthcheck: "http://{{container}}:8080/health"
+`)
 		if werr := os.WriteFile(s.path, placeholder, 0o644); werr != nil {
 			log.Printf("config: could not create placeholder at %s: %v", s.path, werr)
 		} else {
-			log.Printf("config: no config file found at %s — created empty placeholder", s.path)
+			log.Printf("config: no config file found at %s — created placeholder with example config", s.path)
 		}
 		s.mu.Lock()
 		s.config = DynamicConfig{}
