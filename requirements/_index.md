@@ -68,3 +68,4 @@
 | REQ-064 | Docker HEALTHCHECK Readiness Gate                                        | Medium | Completed   | 2026-04-15 | [2026-04-15-docker-healthcheck-readiness.md](2026-04-15-docker-healthcheck-readiness.md) |
 | REQ-065 | Dynamic Configuration File (YAML Override Store)                         | High   | Completed   | 2026-05-13 | [2026-05-13-dynamic-config-file.md](2026-05-13-dynamic-config-file.md) |
 | REQ-066 | Config Placeholder — Commented Example                                   | Low    | Completed   | 2026-05-15 | [2026-05-15-config-placeholder-example.md](2026-05-15-config-placeholder-example.md) |
+| REQ-067 | Per-Service TLS Termination and API Key Authentication                   | High   | Planned     | 2026-05-15 | [2026-05-15-per-service-tls-and-api-key.md](2026-05-15-per-service-tls-and-api-key.md) |
