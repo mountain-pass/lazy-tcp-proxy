@@ -1,8 +1,8 @@
-# Per-Service TLS Termination and API Key Authentication — Implementation Plan
+# Per-Service HTTPS Termination and API Key Authentication — Implementation Plan
 
 **Requirement**: [2026-05-15-per-service-tls-and-api-key.md](2026-05-15-per-service-tls-and-api-key.md)
 **Date**: 2026-05-15
-**Status**: Draft
+**Status**: Implemented
 
 ---
 
@@ -60,12 +60,12 @@ if err != nil {
 srv := proxy.NewServer(ctx, mgr, startTime, idleTimeout, tick, startTimeout, tlsConfig)
 ```
 
-### 5. Add `tlsEnabled` and `apiKey` to `targetState` (`internal/proxy/server.go`)
+### 5. Add `httpsEnabled` and `apiKey` to `targetState` (`internal/proxy/server.go`)
 
 ```go
 type targetState struct {
     // existing fields …
-    tlsEnabled bool
+    httpsEnabled bool
     apiKey     string
 }
 ```
@@ -78,7 +78,7 @@ type targetState struct {
 ln, err := net.Listen("tcp", fmt.Sprintf(":%d", m.ListenPort))
 if err != nil { … }
 
-if info.TLS {
+if info.HTTPS {
     if s.tlsConfig == nil {
         log.Printf("proxy: TLS requested for %s but no TLS config available; skipping port %d",
             info.ContainerName, m.ListenPort)
@@ -89,7 +89,7 @@ if info.TLS {
 
 ts := &targetState{
     // existing fields …
-    tlsEnabled: info.TLS,
+    httpsEnabled: info.HTTPS,
     apiKey:     info.APIKey,
 }
 ```
@@ -98,7 +98,7 @@ ts := &targetState{
 
 ```go
 existing.apiKey = info.APIKey
-existing.tlsEnabled = info.TLS
+existing.httpsEnabled = info.HTTPS
 // Note: listener type cannot change in-place; TLS changes go through
 // remove+register triggered by targetInfoEqual (see step 7).
 ```
@@ -108,7 +108,7 @@ existing.tlsEnabled = info.TLS
 Append to the `return` expression:
 
 ```go
-a.TLS == b.TLS &&
+a.HTTPS == b.HTTPS &&
 a.APIKey == b.APIKey
 ```
 
@@ -179,19 +179,19 @@ func (s *ProxyServer) handleHTTPProxy(client, upstream net.Conn, ts *targetState
 }
 ```
 
-### 9. Parse `lazy-tcp-proxy.tls` and `lazy-tcp-proxy.api-key` labels (`internal/docker/manager.go`)
+### 9. Parse `lazy-tcp-proxy.https` and `lazy-tcp-proxy.api-key` labels (`internal/docker/manager.go`)
 
 In `containerToTargetInfo` (the function that reads Docker labels), add after the existing label reads:
 
 ```go
-tls := strings.TrimSpace(inspect.Config.Labels["lazy-tcp-proxy.tls"]) == "true"
+https := strings.TrimSpace(inspect.Config.Labels["lazy-tcp-proxy.https"]) == "true"
 apiKey := strings.TrimSpace(inspect.Config.Labels["lazy-tcp-proxy.api-key"])
 ```
 
 Set on the returned `TargetInfo`:
 
 ```go
-TLS:    tls,
+HTTPS:  https,
 APIKey: apiKey,
 ```
 
@@ -200,25 +200,25 @@ APIKey: apiKey,
 Mirror step 9 for the k8s annotation map `ann`:
 
 ```go
-tls := strings.TrimSpace(ann["lazy-tcp-proxy.tls"]) == "true"
+https := strings.TrimSpace(ann["lazy-tcp-proxy.https"]) == "true"
 apiKey := strings.TrimSpace(ann["lazy-tcp-proxy.api-key"])
 ```
 
 Set on the returned `TargetInfo`.
 
-### 11. Add `TLS` and `APIKey` fields to `ServiceEntry` and wire them (`internal/config/store.go`)
+### 11. Add `HTTPS` and `APIKey` fields to `ServiceEntry` and wire them (`internal/config/store.go`)
 
 In `ServiceEntry`:
 
 ```go
-TLS    bool   `yaml:"tls,omitempty"     json:"tls,omitempty"`
+HTTPS  bool   `yaml:"https,omitempty"   json:"https,omitempty"`
 APIKey string `yaml:"api_key,omitempty" json:"api_key,omitempty"`
 ```
 
 In `entryToTargetInfo`:
 
 ```go
-info.TLS    = entry.TLS
+info.HTTPS    = entry.HTTPS
 info.APIKey = entry.APIKey
 ```
 
@@ -227,7 +227,7 @@ info.APIKey = entry.APIKey
 Add commented example lines for the two new fields in the placeholder YAML written when no config file exists:
 
 ```yaml
-#    tls: true
+#    https: true
 #    api_key: "your-secret-key"
 ```
 
@@ -237,9 +237,9 @@ Add commented example lines for the two new fields in the placeholder YAML writt
 
 | Test | Input A | Input B | Expected |
 |------|---------|---------|----------|
-| TLS differs | `TLS: false` | `TLS: true` | not equal |
+| TLS differs | `HTTPS: false` | `HTTPS: true` | not equal |
 | APIKey differs | `APIKey: "a"` | `APIKey: "b"` | not equal |
-| Both same | `TLS: true, APIKey: "x"` | `TLS: true, APIKey: "x"` | equal |
+| Both same | `HTTPS: true, APIKey: "x"` | `HTTPS: true, APIKey: "x"` | equal |
 
 **`internal/proxy/server_test.go`** — add integration-style test for `handleHTTPProxy` (or a dedicated `TestHandleHTTPProxy`):
 
@@ -264,13 +264,13 @@ Add commented example lines for the two new fields in the placeholder YAML writt
 
 | File | Action | Description |
 |------|--------|-------------|
-| `internal/types/types.go` | Modify | Add `TLS bool` and `APIKey string` to `TargetInfo` |
+| `internal/types/types.go` | Modify | Add `HTTPS bool` and `APIKey string` to `TargetInfo` |
 | `internal/proxy/tls.go` | Create | `GenerateSelfSignedTLSConfig()` |
 | `internal/proxy/tls_test.go` | Create | Unit tests for cert generation |
 | `internal/proxy/server.go` | Modify | `NewServer` signature; `targetState` fields; `RegisterTarget` TLS wrap; `targetInfoEqual`; `handleConn` branch; new `handleHTTPProxy` |
 | `main.go` | Modify | Generate TLS config; pass to `NewServer` |
-| `internal/docker/manager.go` | Modify | Parse `lazy-tcp-proxy.tls` and `lazy-tcp-proxy.api-key` labels |
-| `internal/k8s/backend.go` | Modify | Parse `lazy-tcp-proxy.tls` and `lazy-tcp-proxy.api-key` annotations |
+| `internal/docker/manager.go` | Modify | Parse `lazy-tcp-proxy.https` and `lazy-tcp-proxy.api-key` labels |
+| `internal/k8s/backend.go` | Modify | Parse `lazy-tcp-proxy.https` and `lazy-tcp-proxy.api-key` annotations |
 | `internal/config/store.go` | Modify | Add `TLS` and `APIKey` to `ServiceEntry`; wire in `entryToTargetInfo`; update placeholder |
 | `internal/proxy/server_test.go` | Modify | Add `targetInfoEqual` cases; add `handleHTTPProxy` tests |
 
@@ -282,13 +282,13 @@ No new HTTP endpoints. New per-service configuration fields only.
 
 **Docker label:**
 ```
-lazy-tcp-proxy.tls=true
+lazy-tcp-proxy.https=true
 lazy-tcp-proxy.api-key=<secret>
 ```
 
 **YAML config:**
 ```yaml
-tls: true
+https: true
 api_key: <secret>
 ```
 
@@ -312,7 +312,7 @@ if err != nil {
     log.Printf("proxy: failed to listen on TCP port %d for \033[33m%s\033[0m: %v", m.ListenPort, info.ContainerName, err)
     continue
 }
-if info.TLS {
+if info.HTTPS {
     if s.tlsConfig == nil {
         log.Printf("proxy: TLS requested for \033[33m%s\033[0m port %d but TLS config unavailable; falling back to plain TCP",
             info.ContainerName, m.ListenPort)
@@ -360,6 +360,6 @@ func GenerateSelfSignedTLSConfig() (*tls.Config, error) {
 ## Risks & Open Questions
 
 - **HTTP/1.0 and non-HTTP connections with `api_key` set**: a non-HTTP TCP connection (e.g. raw binary protocol) will cause `http.ReadRequest` to return an error, and the connection will be dropped silently (no 401, since we can't form one). This is acceptable per the design doc.
-- **`bufio.Reader` buffering and TLS**: when `tls: true` is set on a listener, `conn` in `handleConn` is already a `*tls.Conn`. Wrapping it in `bufio.Reader` works fine — `bufio.Reader` reads from whatever `io.Reader` it wraps.
+- **`bufio.Reader` buffering and TLS**: when `https: true` is set on a listener, `conn` in `handleConn` is already a `*tls.Conn`. Wrapping it in `bufio.Reader` works fine — `bufio.Reader` reads from whatever `io.Reader` it wraps.
 - **`req.Write` vs `req.WriteProxy`**: `req.Write` writes the request in HTTP/1.1 format suitable for sending to an origin server (not a proxy), which is what we want. `req.WriteProxy` would include the full URL in the request line, which is only needed for explicit HTTP proxies.
 - **Streaming / large bodies**: `resp.Write` streams the body from `ubr` directly to `client`. For large files or chunked responses this works without buffering the entire body in memory.

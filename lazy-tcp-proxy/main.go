@@ -332,7 +332,11 @@ func main() {
 	log.Printf("inactivity check interval: %s (set POLL_INTERVAL_SECS to override)", tick)
 	startTimeout := resolveStartTimeout()
 	log.Printf("UDP start timeout: %s (set START_TIMEOUT_SECS or lazy-tcp-proxy.start-timeout-secs label to override)", startTimeout)
-	srv := proxy.NewServer(ctx, mgr, startTime, idleTimeout, tick, startTimeout)
+	tlsConfig, tlsErr := proxy.GenerateSelfSignedTLSConfig()
+	if tlsErr != nil {
+		log.Fatalf("failed to generate self-signed TLS certificate: %v", tlsErr)
+	}
+	srv := proxy.NewServer(ctx, mgr, startTime, idleTimeout, tick, startTimeout, tlsConfig)
 
 	// Create and wire the cron scheduler (must happen before Discover so that
 	// initial targets get their schedules registered).

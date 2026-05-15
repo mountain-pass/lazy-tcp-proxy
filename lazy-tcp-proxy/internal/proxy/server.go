@@ -1,9 +1,11 @@
 package proxy
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	crypto_rand "crypto/rand"
+	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -91,6 +93,8 @@ type targetState struct {
 	hasHealthCheck  bool           // true if the container has a Docker HEALTHCHECK configured
 	running         bool
 	removed         bool
+	httpsEnabled    bool
+	apiKey          string
 }
 
 // webhookPayload is the JSON body sent to a container's webhook URL.
@@ -150,10 +154,11 @@ type ProxyServer struct {
 	webhookClient *http.Client
 	sched         cronScheduler      // nil if no scheduler configured
 	startGroup    singleflight.Group // deduplicates concurrent EnsureRunning calls per container
+	tlsConfig     *tls.Config        // shared self-signed cert; nil if cert generation failed
 }
 
 // NewServer creates a new ProxyServer backed by the given backend.
-func NewServer(ctx context.Context, b containerBackend, startTime time.Time, idleTimeout, pollInterval, startTimeout time.Duration) *ProxyServer {
+func NewServer(ctx context.Context, b containerBackend, startTime time.Time, idleTimeout, pollInterval, startTimeout time.Duration, tlsConfig *tls.Config) *ProxyServer {
 	return &ProxyServer{
 		backend:       b,
 		ctx:           ctx,
@@ -165,6 +170,7 @@ func NewServer(ctx context.Context, b containerBackend, startTime time.Time, idl
 		pollInterval:  pollInterval,
 		startTime:     startTime,
 		webhookClient: &http.Client{Timeout: 5 * time.Second},
+		tlsConfig:     tlsConfig,
 	}
 }
 
@@ -387,6 +393,8 @@ func (s *ProxyServer) RegisterTarget(info types.TargetInfo) {
 			existing.hasHealthCheck = info.HasHealthCheck
 			existing.running = info.Running
 			existing.removed = false
+			existing.httpsEnabled = info.HTTPS
+			existing.apiKey = info.APIKey
 			log.Printf("proxy: updated TCP target \033[33m%s\033[0m on port %d->%d", info.ContainerName, m.ListenPort, m.TargetPort)
 			continue
 		}
@@ -395,6 +403,15 @@ func (s *ProxyServer) RegisterTarget(info types.TargetInfo) {
 		if err != nil {
 			log.Printf("proxy: failed to listen on TCP port %d for \033[33m%s\033[0m: %v", m.ListenPort, info.ContainerName, err)
 			continue
+		}
+		if info.HTTPS {
+			if s.tlsConfig == nil {
+				log.Printf("proxy: HTTPS requested for \033[33m%s\033[0m port %d but TLS config unavailable; falling back to plain TCP",
+					info.ContainerName, m.ListenPort)
+			} else {
+				ln = tls.NewListener(ln, s.tlsConfig)
+				log.Printf("proxy: HTTPS enabled for \033[33m%s\033[0m port %d", info.ContainerName, m.ListenPort)
+			}
 		}
 
 		ts := &targetState{
@@ -407,6 +424,8 @@ func (s *ProxyServer) RegisterTarget(info types.TargetInfo) {
 			httpHealthCheck: info.HTTPHealthCheck,
 			hasHealthCheck:  info.HasHealthCheck,
 			running:         info.Running,
+			httpsEnabled:    info.HTTPS,
+			apiKey:          info.APIKey,
 		}
 		s.targets[m.ListenPort] = ts
 		log.Printf("proxy: registered target \033[33m%s\033[0m, TCP %d->%d", info.ContainerName, m.ListenPort, m.TargetPort)
@@ -519,7 +538,9 @@ func targetInfoEqual(a, b types.TargetInfo) bool {
 		reflect.DeepEqual(a.Dependants, b.Dependants) &&
 		a.CronStart == b.CronStart &&
 		a.CronStop == b.CronStop &&
-		a.HTTPHealthCheck == b.HTTPHealthCheck
+		a.HTTPHealthCheck == b.HTTPHealthCheck &&
+		a.HTTPS == b.HTTPS &&
+		a.APIKey == b.APIKey
 }
 
 // Update reconciles the proxy's registered targets with newTargets.
@@ -907,9 +928,16 @@ func (s *ProxyServer) handleConn(conn net.Conn, ts *targetState) {
 	}
 	defer upstream.Close() //nolint:errcheck
 
-	defer func() { ts.lastActive = time.Now() }()
-
 	log.Printf("proxy: proxying connection to %s", upstream.RemoteAddr())
+
+	if ts.apiKey != "" {
+		s.handleHTTPProxy(conn, upstream, ts)
+		ts.lastActive = time.Now()
+		log.Printf("proxy: connection to \033[33m%s\033[0m closed", ts.info.ContainerName)
+		return
+	}
+
+	defer func() { ts.lastActive = time.Now() }()
 
 	var closeOnce sync.Once
 	closeAll := func() {
@@ -940,6 +968,56 @@ func (s *ProxyServer) handleConn(conn net.Conn, ts *targetState) {
 
 	wg.Wait()
 	log.Printf("proxy: connection to \033[33m%s\033[0m closed", ts.info.ContainerName)
+}
+
+// handleHTTPProxy handles a connection in HTTP mode: reads each request,
+// enforces X-API-Key, strips the header, and forwards to upstream.
+// Supports HTTP/1.1 keep-alive.
+func (s *ProxyServer) handleHTTPProxy(client, upstream net.Conn, ts *targetState) {
+	br := bufio.NewReader(client)
+	ubr := bufio.NewReader(upstream)
+
+	for {
+		req, err := http.ReadRequest(br)
+		if err != nil {
+			return // EOF or malformed request — connection done
+		}
+
+		if req.Header.Get("X-API-Key") != ts.apiKey {
+			log.Printf("proxy: api-key: rejected request to \033[33m%s\033[0m from \033[36m%s\033[0m (bad or missing key)",
+				ts.info.ContainerName, client.RemoteAddr())
+			client.Write([]byte( //nolint:errcheck
+				"HTTP/1.1 401 Unauthorized\r\n" +
+					"Content-Length: 0\r\n" +
+					"Connection: close\r\n\r\n"))
+			return
+		}
+		req.Header.Del("X-API-Key")
+
+		if err := req.Write(upstream); err != nil {
+			return
+		}
+		if req.Body != nil {
+			req.Body.Close() //nolint:errcheck
+		}
+
+		resp, err := http.ReadResponse(ubr, req)
+		if err != nil {
+			return
+		}
+		keepAlive := req.ProtoAtLeast(1, 1) && !resp.Close
+		if err := resp.Write(client); err != nil {
+			resp.Body.Close() //nolint:errcheck
+			return
+		}
+		resp.Body.Close() //nolint:errcheck
+
+		ts.lastActive = time.Now()
+
+		if !keepAlive {
+			return
+		}
+	}
 }
 
 // cascadeStart starts all registered dependants of upstream.
