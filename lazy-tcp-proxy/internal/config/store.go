@@ -37,6 +37,7 @@ type ServiceEntry struct {
 	HTTPHealthCheck  string   `yaml:"http_healthcheck,omitempty"  json:"http_healthcheck,omitempty"`
 	HTTPS            bool     `yaml:"https,omitempty"             json:"https,omitempty"`
 	APIKey           string   `yaml:"api_key,omitempty"           json:"api_key,omitempty"`
+	Scale            *int     `yaml:"scale,omitempty"             json:"scale,omitempty"`
 }
 
 // Store manages a YAML config file on disk and the in-memory config it represents.
@@ -178,6 +179,7 @@ func (s *Store) Apply(discovered []types.TargetInfo, defaultID func(string) stri
 			info.NetworkIDs = discovered[idx].NetworkIDs
 			info.Running = discovered[idx].Running
 			info.HasHealthCheck = discovered[idx].HasHealthCheck
+			info.DesiredReplicas = discovered[idx].DesiredReplicas
 			result[idx] = info
 		} else {
 			// YAML-only entry: assign a backend-appropriate container ID.
@@ -234,6 +236,10 @@ func entryToTargetInfo(entry ServiceEntry) (types.TargetInfo, error) {
 	info.HTTPHealthCheck = entry.HTTPHealthCheck
 	info.HTTPS = entry.HTTPS
 	info.APIKey = entry.APIKey
+
+	if entry.Scale != nil && *entry.Scale >= 1 {
+		info.DesiredReplicas = *entry.Scale
+	}
 
 	return info, nil
 }

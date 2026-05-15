@@ -269,7 +269,9 @@ func runStatusServer(ctx context.Context, srv *proxy.ProxyServer, port int) {
 // event watching, the three proxy methods, and shutdown cleanup.
 type backendManager interface {
 	Discover(ctx context.Context, handler types.TargetHandler) error
+	DiscoverServices(ctx context.Context, handler types.TargetHandler) error
 	WatchEvents(ctx context.Context, handler types.TargetHandler)
+	WatchServiceEvents(ctx context.Context, handler types.TargetHandler)
 	EnsureRunning(ctx context.Context, targetID string) error
 	StopContainer(ctx context.Context, targetID, targetName string) error
 	GetUpstreamHost(ctx context.Context, targetID, hint string) (string, error)
@@ -279,6 +281,9 @@ type backendManager interface {
 	// name. Used by the config store to assign IDs to YAML-only targets.
 	// Docker: returns name as-is (Docker API accepts names). K8s: returns "namespace/name".
 	DefaultTargetID(name string) string
+	// NotifyTargets syncs internal backend state (e.g. swarm service registry)
+	// from the merged target list after config overlay is applied.
+	NotifyTargets(targets []types.TargetInfo)
 }
 
 // discoverAndApply runs backend discovery, applies the YAML config overlay,
@@ -288,10 +293,14 @@ func discoverAndApply(ctx context.Context, mgr backendManager, store *config.Sto
 	if err := mgr.Discover(ctx, collector); err != nil {
 		return fmt.Errorf("discover: %w", err)
 	}
+	if err := mgr.DiscoverServices(ctx, collector); err != nil {
+		log.Printf("discover services warning: %v", err)
+	}
 	merged, errs := store.Apply(collector.Targets(), mgr.DefaultTargetID)
 	for _, e := range errs {
 		log.Printf("config apply warning: %v", e)
 	}
+	mgr.NotifyTargets(merged)
 	srv.Update(merged)
 	return nil
 }
@@ -384,10 +393,13 @@ func main() {
 		log.Printf("initial discovery error: %v", err)
 	}
 
-	// Watch for runtime changes (WatchEvents calls RegisterTarget directly for
-	// label-carrying containers; the config overlay is applied on reload only).
+	// Watch for runtime changes (WatchEvents/WatchServiceEvents call RegisterTarget
+	// directly for label-carrying containers/services; config overlay applied on reload only).
 	go func() {
 		mgr.WatchEvents(ctx, srv)
+	}()
+	go func() {
+		mgr.WatchServiceEvents(ctx, srv)
 	}()
 
 	// Periodically stop idle targets

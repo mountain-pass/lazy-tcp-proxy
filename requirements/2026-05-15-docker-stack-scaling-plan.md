@@ -2,7 +2,7 @@
 
 **Requirement**: [2026-05-15-docker-stack-scaling.md](2026-05-15-docker-stack-scaling.md)
 **Date**: 2026-05-15
-**Status**: Draft
+**Status**: Implemented
 
 ## Implementation Steps
 
@@ -361,3 +361,13 @@ go func() {
 3. **Service update race**: `ServiceUpdate` requires the current `Version` to avoid conflicting writes. If two agents update a service concurrently, one will get a version conflict error. The existing `singleflight` deduplication in the proxy server mitigates concurrent `EnsureRunning` calls for the same service.
 4. **Global services**: Services with `mode: global` (not `replicated`) cannot be scaled by replica count. The proxy should log a warning and skip them if `Spec.Mode.Replicated == nil`.
 5. **`DefaultTargetID` for services**: YAML-only service entries use `defaultID(name) = name` (the service name) as the `ContainerID`. Docker Swarm accepts service names in `ServiceInspect`, so `ensureServiceRunning("myservice", 2)` will work correctly.
+
+## Implementation Notes (Actual vs. Planned)
+
+Implemented as planned with no deviations. Key actuals:
+
+- `handleServiceEvent` extracted as a private helper to keep `WatchServiceEvents` readable.
+- Global service guard (`Spec.Mode.Replicated == nil`) implemented in both `ensureServiceRunning` and `stopService` with clear error messages, as noted in risk #4.
+- `WatchServiceEvents` checks swarm mode at each reconnect cycle and exits the goroutine silently if swarm is not active (avoids looping in non-swarm environments).
+- `go build ./...` and `go vet ./...` both pass with zero errors.
+- All existing unit tests pass (`internal/docker`, `internal/k8s`, `internal/proxy`, `internal/types`).
