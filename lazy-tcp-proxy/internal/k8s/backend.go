@@ -233,6 +233,15 @@ func (b *Backend) GetUpstreamHost(_ context.Context, tid, _ string) (string, err
 // Shutdown is a no-op for the k8s backend (no network joins to undo).
 func (b *Backend) Shutdown(_ context.Context) {}
 
+// DiscoverServices is a no-op for the k8s backend (swarm not applicable).
+func (b *Backend) DiscoverServices(_ context.Context, _ types.TargetHandler) error { return nil }
+
+// WatchServiceEvents is a no-op for the k8s backend (swarm not applicable).
+func (b *Backend) WatchServiceEvents(_ context.Context, _ types.TargetHandler) {}
+
+// NotifyTargets is a no-op for the k8s backend (swarm registry not applicable).
+func (b *Backend) NotifyTargets(_ []types.TargetInfo) {}
+
 // DefaultTargetID returns "namespace/name" for use as a ContainerID when a
 // YAML config entry has no matching discovered Deployment.
 func (b *Backend) DefaultTargetID(name string) string {

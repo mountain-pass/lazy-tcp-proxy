@@ -35,6 +35,7 @@ type TargetInfo struct {
 	HasHealthCheck  bool           // true if the container has a HEALTHCHECK configured
 	HTTPS           bool           // true → wrap listener with TLS using shared self-signed cert
 	APIKey          string         // non-empty → require X-API-Key header on every HTTP request
+	DesiredReplicas int            // 0 = plain Docker container; ≥ 1 = swarm service (scale-to value)
 }
 
 // TargetHandler is implemented by the proxy server to receive target updates.
