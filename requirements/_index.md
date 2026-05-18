@@ -71,4 +71,4 @@
 | REQ-067 | Per-Service TLS Termination and API Key Authentication                   | High   | Completed   | 2026-05-15 | [2026-05-15-per-service-tls-and-api-key.md](2026-05-15-per-service-tls-and-api-key.md) |
 | REQ-068 | Docker Stack Service Scaling                                             | High   | Completed   | 2026-05-15 | [2026-05-15-docker-stack-scaling.md](2026-05-15-docker-stack-scaling.md) |
 | REQ-069 | Traefik Integration (HTTP Provider Endpoint)                             | High   | Completed   | 2026-05-18 | [2026-05-18-traefik-integration.md](2026-05-18-traefik-integration.md) |
-| REQ-070 | Traefik Entrypoint and CertResolver Configuration                        | High   | In Progress | 2026-05-18 | [2026-05-18-traefik-entrypoint-certresolver.md](2026-05-18-traefik-entrypoint-certresolver.md) |
+| REQ-070 | Traefik Entrypoint and CertResolver Configuration                        | High   | Completed   | 2026-05-18 | [2026-05-18-traefik-entrypoint-certresolver.md](2026-05-18-traefik-entrypoint-certresolver.md) |

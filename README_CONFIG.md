@@ -20,9 +20,11 @@ Configuration is stored in a YAML file on disk. Changes are applied by calling
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CONFIG_PATH` | `/etc/lazy-tcp-proxy/config.yaml` | Path to the YAML config file |
-| `ADMIN_PORT` | `8081` | Port for the admin API server. Set to `0` to disable |
+| `ADMIN_PORT` | `0` | Port for the admin API server. Set to `0` to disable (default) |
 | `ADMIN_API_KEY` | *(required if `ADMIN_PORT` > 0)* | API key for authenticating admin API requests |
 | `TRAEFIK_PROXY_HOST` | `lazy-tcp-proxy` | Hostname/IP Traefik uses to reach lazy-tcp-proxy's listen ports (see [Traefik Integration](README_LABELS.md#traefik-integration)) |
+| `TRAEFIK_ENTRYPOINT` | *(unset)* | When set, adds `"entryPoints": ["<value>"]` to every generated Traefik HTTP router |
+| `TRAEFIK_CERTRESOLVER` | *(unset)* | When set, adds `"tls": {"certResolver": "<value>"}` to every generated Traefik HTTP router |
 
 If `ADMIN_PORT` is non-zero and `ADMIN_API_KEY` is not set, the proxy will refuse to start.
 
@@ -150,7 +152,7 @@ services:
 
 ## Admin API
 
-The admin API runs on `ADMIN_PORT` (default `8081`) and is protected by the `X-API-Key` header.
+The admin API runs on `ADMIN_PORT` (default `0`, disabled) and is protected by the `X-API-Key` header.
 
 All requests must include:
 ```

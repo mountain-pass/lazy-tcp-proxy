@@ -2,7 +2,7 @@
 
 **Requirement**: [2026-05-18-traefik-entrypoint-certresolver.md](2026-05-18-traefik-entrypoint-certresolver.md)
 **Date**: 2026-05-18
-**Status**: Approved
+**Status**: Implemented
 
 ## Implementation Steps
 
