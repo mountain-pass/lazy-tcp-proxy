@@ -111,11 +111,17 @@ func resolveTraefikProxyHost() string {
 }
 
 func resolveTraefikEntryPoint() string {
-	return os.Getenv("TRAEFIK_ENTRYPOINT")
+	if v, ok := os.LookupEnv("TRAEFIK_ENTRYPOINT"); ok {
+		return v
+	}
+	return "websecure"
 }
 
 func resolveTraefikCertResolver() string {
-	return os.Getenv("TRAEFIK_CERTRESOLVER")
+	if v, ok := os.LookupEnv("TRAEFIK_CERTRESOLVER"); ok {
+		return v
+	}
+	return "myresolver"
 }
 
 const statusDashboardHTML = `<!DOCTYPE html>
