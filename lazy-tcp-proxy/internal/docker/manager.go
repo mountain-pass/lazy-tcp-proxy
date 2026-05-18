@@ -527,7 +527,7 @@ func (m *Manager) ensureServiceRunning(ctx context.Context, serviceID string, de
 	n := uint64(desiredReplicas)
 	svc.Spec.Mode.Replicated.Replicas = &n
 	if _, err := m.cli.ServiceUpdate(ctx, serviceID, client.ServiceUpdateOptions{
-		Version: svc.Meta.Version,
+		Version: svc.Version,
 		Spec:    svc.Spec,
 	}); err != nil {
 		return fmt.Errorf("scaling up service: %w", err)
@@ -553,7 +553,7 @@ func (m *Manager) stopService(ctx context.Context, serviceID, serviceName string
 	n := uint64(0)
 	svc.Spec.Mode.Replicated.Replicas = &n
 	if _, err := m.cli.ServiceUpdate(ctx, serviceID, client.ServiceUpdateOptions{
-		Version: svc.Meta.Version,
+		Version: svc.Version,
 		Spec:    svc.Spec,
 	}); err != nil {
 		return fmt.Errorf("scaling down service: %w", err)
@@ -660,7 +660,7 @@ func (m *Manager) DiscoverServices(ctx context.Context, handler types.TargetHand
 // serviceToTargetInfo converts a swarm.Service into a TargetInfo.
 // Returns an error if the service lacks required labels (scale, ports).
 func (m *Manager) serviceToTargetInfo(svc swarm.Service) (types.TargetInfo, error) {
-	labels := svc.Spec.Annotations.Labels
+	labels := svc.Spec.Labels
 	name := svc.Spec.Name
 
 	scaleStr, hasScale := labels["lazy-tcp-proxy.scale"]
