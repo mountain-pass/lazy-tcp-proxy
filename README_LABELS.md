@@ -29,6 +29,7 @@ Add these labels to any container you want proxied/managed:
 | `lazy-tcp-proxy.http-healthcheck` | No | URL to poll after a cold start — proxy waits for a 2xx response before forwarding TCP traffic. Supports `{{container}}` placeholder (see [HTTP Health Check](#http-health-check)) |
 | `lazy-tcp-proxy.tls` | No | Set to `true` to wrap the listener with TLS using a shared self-signed certificate. Works with any TCP protocol, not only HTTP (see [TLS Termination](#tls-termination)) |
 | `lazy-tcp-proxy.api-key` | No | Require clients to send this value in the `X-API-Key` header on every HTTP request. Missing or incorrect key → `401 Unauthorized`. The header is stripped before forwarding (see [API Key Authentication](#api-key-authentication)) |
+| `lazy-tcp-proxy.traefik-hosts` | No | Comma-separated `<domain>:<listen_port>` pairs — exposes these mappings via `GET /traefik` for Traefik's HTTP provider (see [Traefik Integration](#traefik-integration)) |
 
 \* At least one of `lazy-tcp-proxy.ports` or `lazy-tcp-proxy.udp-ports` must be set. A container may use TCP only, UDP only, or both.
 
@@ -475,3 +476,104 @@ annotations:
   lazy-tcp-proxy.ports: "9000:80"
   lazy-tcp-proxy.api-key: "my-secret-key"
 ```
+
+---
+
+## Traefik Integration
+
+lazy-tcp-proxy integrates with [Traefik](https://traefik.io/traefik/) via the HTTP provider,
+enabling domain-name routing on top of the port-based proxying:
+
+```
+User → Traefik (:80 / :443) → lazy-tcp-proxy (per-service port) → proxied container
+```
+
+Traefik periodically polls `GET /traefik` on the lazy-tcp-proxy status server (default port 8080)
+and picks up any routing changes within the next poll interval (typically 5 seconds). No Traefik
+restart is needed when containers are added or removed.
+
+### Label
+
+```
+lazy-tcp-proxy.traefik-hosts=<domain>:<listen_port>
+```
+
+Each entry maps a domain name to one of this container's listen ports. Multiple entries are
+comma-separated. The `<listen_port>` is the port lazy-tcp-proxy binds on the host (the left side
+of the `ports` mapping).
+
+**Single port:**
+```yaml
+labels:
+  - "lazy-tcp-proxy.enabled=true"
+  - "lazy-tcp-proxy.ports=9001:80"
+  - "lazy-tcp-proxy.traefik-hosts=whoami.localhost:9001"
+```
+
+**Multiple domains (including from a port range):**
+```yaml
+labels:
+  - "lazy-tcp-proxy.enabled=true"
+  - "lazy-tcp-proxy.ports=9000-9099:9000-9099"
+  - "lazy-tcp-proxy.traefik-hosts=app1.localhost:9000,app2.localhost:9005"
+```
+
+### What gets generated
+
+For each `traefik-hosts` entry, lazy-tcp-proxy emits one Traefik HTTP router and one HTTP service:
+
+```json
+{
+  "http": {
+    "routers": {
+      "whoami-localhost-9001-router": {
+        "rule": "Host(`whoami.localhost`)",
+        "service": "whoami-localhost-9001-service"
+      }
+    },
+    "services": {
+      "whoami-localhost-9001-service": {
+        "loadBalancer": {
+          "servers": [{ "url": "http://lazy-tcp-proxy:9001" }]
+        }
+      }
+    }
+  }
+}
+```
+
+`entryPoints` is intentionally omitted — Traefik applies the router to all defined entry points
+by default, keeping lazy-tcp-proxy decoupled from Traefik's static config.
+
+### Environment variable
+
+| Variable | Default | Description |
+|---|---|---|
+| `TRAEFIK_PROXY_HOST` | `lazy-tcp-proxy` | Hostname/IP Traefik uses to reach lazy-tcp-proxy's listen ports |
+
+Set this to the DNS name or IP address that Traefik can use to reach lazy-tcp-proxy. In a Docker
+Compose setup, this is normally the service name (default `lazy-tcp-proxy`).
+
+### Minimal Traefik static config (`traefik.yml`)
+
+```yaml
+entryPoints:
+  web:
+    address: ":80"
+
+providers:
+  http:
+    endpoint: "http://lazy-tcp-proxy:8080/traefik"
+    pollInterval: "5s"
+```
+
+### Protocol support
+
+`traefik-hosts` only applies to **HTTP services** — Traefik's HTTP provider routes by `Host()`
+header, which requires HTTP. Raw TCP and UDP services do not benefit from domain routing via this
+integration; they continue to work directly on their listen ports.
+
+### Full Docker Compose example
+
+See [`example/traefik/`](example/traefik/) for a working example with Traefik, lazy-tcp-proxy,
+and a whoami test container.
