@@ -7,16 +7,16 @@
 ## Problem Statement
 
 lazy-tcp-proxy currently exposes services on fixed TCP ports. Users must know which port maps to
-which service and must connect directly to those ports. There is no way to route traffic to a
-proxied service by domain name (e.g. `whoami.example.com`) without an additional reverse proxy.
+which service and connect directly to those ports. There is no way to route traffic to a proxied
+service by domain name (e.g. `whoami.example.com`) without additional reverse-proxy configuration.
 
 Traefik is a widely used cloud-native reverse proxy. Its free/OSS version (v2/v3) supports an
 **HTTP provider** — a pull-based mechanism where Traefik periodically polls an HTTP endpoint to
 fetch its dynamic routing configuration. This makes Traefik configurable by a sidecar service
 without any writable API or file watching.
 
-By integrating lazy-tcp-proxy with Traefik's HTTP provider, users gain domain-name-based routing
-on top of the existing port-based proxying:
+By integrating lazy-tcp-proxy with Traefik's HTTP provider, users gain domain-name-based HTTP
+routing on top of the existing port-based proxying:
 
 ```
 User → Traefik (80/443) → lazy-tcp-proxy (per-service ports) → proxied Docker service
@@ -24,85 +24,144 @@ User → Traefik (80/443) → lazy-tcp-proxy (per-service ports) → proxied Doc
 
 ## Functional Requirements
 
-1. **Traefik config endpoint** — lazy-tcp-proxy exposes `GET /traefik` on the existing status
-   HTTP server (port `STATUS_PORT`, default 8080). The response is a Traefik v3-compatible HTTP
-   provider JSON payload.
+### 1. Traefik config endpoint
 
-2. **Per-service domain configuration** — each proxied service can declare one or more Traefik
-   host rules via:
-   - Docker label: `lazy-tcp-proxy.traefik-host=myapp.example.com` (applies to all ports of that
-     service; if the service has multiple ports, the first listen port is used).
-   - Docker label (per-port): `lazy-tcp-proxy.traefik-host.9001=myapp.example.com` where `9001`
-     is the listen port.
-   - YAML config field: `traefik_host: "myapp.example.com"` (single-port shorthand) or
-     `traefik_hosts: { 9001: "myapp.example.com", 9002: "admin.example.com" }` (per-port map).
+`GET /traefik` on the existing status HTTP server (port `STATUS_PORT`, default 8080).
 
-3. **Backend URL construction** — when generating the Traefik config, lazy-tcp-proxy constructs
-   backend service URLs as `http://<TRAEFIK_PROXY_HOST>:<listen_port>`. The host is configurable
-   via the `TRAEFIK_PROXY_HOST` environment variable (default: the value of `hostname()`).
+The response is a Traefik v3-compatible HTTP provider JSON payload containing `http`, `tcp`, and
+`udp` sections as appropriate (see below). `Content-Type: application/json`.
 
-4. **Generated Traefik config shape** — for each registered service port with a `traefik_host`:
-   - One Traefik HTTP **router** with rule `Host(\`<traefik_host>\`)`, pointing to a named service,
-     and attached to all configured entry points (default: `web`; configurable via
-     `TRAEFIK_ENTRYPOINTS` env var, comma-separated list, e.g. `web,websecure`).
-   - One Traefik HTTP **service** (load-balancer with a single server URL:
-     `http://<TRAEFIK_PROXY_HOST>:<listen_port>`).
-   - Router and service names are derived from the container name + listen port, e.g.
-     `whoami-9001-router` / `whoami-9001-service`.
+### 2. `traefik_hosts` — per-service domain-to-port mapping
 
-5. **Empty config** — if no registered services have `traefik_host` set, `GET /traefik` returns
-   a valid empty Traefik HTTP provider JSON (`{"http":{"routers":{},"services":{}}}`).
+Each proxied service can declare Traefik host mappings as a list of `"domain:listen_port"` strings.
+`listen_port` is the port lazy-tcp-proxy listens on (the left side of a port mapping).
 
-6. **Docker Compose example** — a new `example/traefik/` directory containing:
-   - `docker-compose.yml` — starts Traefik + lazy-tcp-proxy + an example `whoami` service.
-   - Traefik is configured to poll `http://lazy-tcp-proxy:8080/traefik` every 5 seconds.
-   - The whoami service has `lazy-tcp-proxy.traefik-host=whoami.localhost` set.
-   - `TRAEFIK_PROXY_HOST=lazy-tcp-proxy` is set on lazy-tcp-proxy.
-   - A README explaining how to test the setup.
+**Docker label:**
+```
+lazy-tcp-proxy.traefik-hosts=myapp.localhost:9000,myapp2.localhost:9001
+```
+
+**YAML config:**
+```yaml
+services:
+  - name: "my-container"
+    ports:
+      - "9000-9099:9000-9099"
+    traefik_hosts:
+      - "myapp.localhost:9000"
+      - "myapp2.localhost:9001"
+```
+
+This format reads left-to-right ("this domain routes to this listen port") and naturally handles
+port ranges by letting users list only the specific mappings they need.
+
+### 3. Generated Traefik config — HTTP section
+
+For each `traefik_hosts` entry on a TCP port:
+- One Traefik HTTP **router** with rule `Host(\`<domain>\`)` and `service` pointing to a named
+  load-balancer.
+- One Traefik HTTP **service** (load-balancer with a single server URL:
+  `http://<TRAEFIK_PROXY_HOST>:<listen_port>`).
+- Router and service names derived from the domain + listen port, sanitised to lowercase
+  alphanumeric + hyphens, e.g. `myapp-localhost-9000-router` / `myapp-localhost-9000-service`.
+- `entryPoints` is **omitted** from the router — Traefik applies the router to all defined entry
+  points by default, keeping lazy-tcp-proxy decoupled from Traefik's static configuration.
+
+### 4. Generated Traefik config — TCP section
+
+Traefik TCP routers use `HostSNI` rules. Domain-based TCP routing requires TLS (SNI inspection).
+For non-TLS TCP, only `HostSNI('*')` (catch-all) is possible, providing no domain routing benefit.
+
+**Scope for this feature**: TCP entries in `traefik_hosts` that correspond to a port also
+configured as `https: true` (TLS-terminated by lazy-tcp-proxy) are treated as HTTP mappings
+(Traefik sees plain HTTP). Raw TCP ports without TLS are **not** represented in the Traefik TCP
+section — there is no useful domain routing to offer. This is noted as a future extension.
+
+### 5. Generated Traefik config — UDP section
+
+Traefik UDP routers have no concept of rules or domain matching — they are purely entry-point-based
+(port-based). The architecture `User → Traefik → lazy-tcp-proxy → container` for UDP would only
+shift port management to Traefik's static config without enabling domain routing.
+
+**Scope for this feature**: UDP ports are **not** represented in the generated Traefik config.
+This is noted as a future extension if there is demand for unified port management.
+
+### 6. Middleware overlap — out of scope
+
+lazy-tcp-proxy implements its own per-service `allow_list` and `block_list` (IP-based). Traefik
+has an equivalent IP allowlist middleware. Generating Traefik middleware from lazy-tcp-proxy's
+allow/block lists would be redundant (lazy-tcp-proxy enforces them regardless) and would couple
+the two systems' configurations.
+
+**Decision**: lazy-tcp-proxy's allow/block lists remain the source of truth and are enforced at
+the proxy layer. Generating Traefik middleware from them is left as a future enhancement.
+
+### 7. Empty config
+
+If no registered services have `traefik_hosts` set, `GET /traefik` returns a valid empty payload:
+```json
+{"http":{"routers":{},"services":{}}}
+```
+
+### 8. Environment variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `TRAEFIK_PROXY_HOST` | `lazy-tcp-proxy` | Hostname/IP Traefik uses to reach lazy-tcp-proxy |
+
+`TRAEFIK_PROXY_HOST` must be set to the DNS name or IP address that Traefik can use to reach
+lazy-tcp-proxy's listen ports. It defaults to `lazy-tcp-proxy`, matching the conventional Docker
+Compose service name. Users on non-Docker setups (bare metal, custom names) must override it.
+
+### 9. Docker Compose example
+
+A new `example/traefik/` directory containing:
+- `docker-compose.yml` — Traefik + lazy-tcp-proxy + a `whoami` example service.
+  - Traefik polls `http://lazy-tcp-proxy:8080/traefik` every 5 seconds.
+  - `TRAEFIK_PROXY_HOST=lazy-tcp-proxy` set on lazy-tcp-proxy.
+  - The whoami service labelled with `lazy-tcp-proxy.traefik-hosts=whoami.localhost:9001`.
+  - Traefik listens on port 80 (`web` entry point).
+- `traefik.yml` — minimal Traefik static config (HTTP provider + entry point declaration).
+- `README.md` — how to start and test (`curl -H "Host: whoami.localhost" http://localhost`).
 
 ## User Experience Requirements
 
-### Docker label configuration
-
-Single-port service (all ports inherit the same host — uses first listen port):
-```
-lazy-tcp-proxy.traefik-host=myapp.localhost
-```
-
-Per-port label (when a service has multiple listen ports):
-```
-lazy-tcp-proxy.traefik-host.9001=myapp.localhost
-lazy-tcp-proxy.traefik-host.9002=admin.localhost
-```
-
-### YAML config file
+### YAML config
 
 ```yaml
 services:
   - name: "whoami"
     ports:
       - "9001:80"
-    traefik_host: "whoami.localhost"
-
-  - name: "multi-port-app"
-    ports:
-      - "9001:80"
-      - "9002:8080"
     traefik_hosts:
-      9001: "myapp.localhost"
-      9002: "admin.localhost"
+      - "whoami.localhost:9001"
+
+  - name: "range-app"
+    ports:
+      - "9000-9099:9000-9099"
+    traefik_hosts:
+      - "app1.localhost:9000"
+      - "app2.localhost:9005"
 ```
 
-### Environment variables
+### Docker label
 
-| Variable | Default | Description |
-|---|---|---|
-| `TRAEFIK_PROXY_HOST` | system hostname | Hostname/IP Traefik uses to reach lazy-tcp-proxy |
-| `TRAEFIK_ENTRYPOINTS` | `web` | Comma-separated list of Traefik entry point names |
+```
+lazy-tcp-proxy.traefik-hosts=whoami.localhost:9001
+```
 
-### Example Traefik static config (traefik.yml)
+Multiple mappings (comma-separated, consistent with `lazy-tcp-proxy.ports`):
+```
+lazy-tcp-proxy.traefik-hosts=app1.localhost:9000,app2.localhost:9005
+```
+
+### Traefik static config (`traefik.yml`)
 
 ```yaml
+entryPoints:
+  web:
+    address: ":80"
+
 providers:
   http:
     endpoint: "http://lazy-tcp-proxy:8080/traefik"
@@ -112,50 +171,55 @@ providers:
 ## Technical Requirements
 
 - Response `Content-Type: application/json`.
-- The endpoint is unauthenticated (same as `/status` — network-level access control is expected).
-- Router/service names must be valid Traefik identifiers: lowercase alphanumeric + hyphens.
-  Container names that contain underscores or other characters are sanitised.
-- The endpoint reflects the live in-memory state of the proxy server (same source as `/status`).
-- `traefik_host` and `traefik_hosts` are optional YAML fields; existing configs without them are
-  completely unaffected.
-- Traefik v3 JSON shape is used (HTTP provider format is identical between v2 and v3).
+- The endpoint is unauthenticated (same as `/status`; network-level access control expected).
+- Router/service names are sanitised: lowercase, replace non-alphanumeric chars with `-`, collapse
+  consecutive hyphens, trim leading/trailing hyphens.
+- The endpoint reflects live in-memory proxy state (same source as `/status`).
+- `traefik_hosts` is an optional field; existing configs without it are completely unaffected.
+- Traefik v3 JSON shape is used (identical between v2 and v3 for the HTTP provider).
 
 ## Acceptance Criteria
 
 - [ ] `GET /traefik` returns `200 OK` with `Content-Type: application/json`.
-- [ ] Response is valid Traefik HTTP provider JSON (routers + services objects).
-- [ ] A service with `lazy-tcp-proxy.traefik-host=whoami.localhost` and listen port 9001 produces
-      a router with rule `Host(\`whoami.localhost\`)` and a service URL `http://<host>:9001`.
-- [ ] A service with per-port labels (`lazy-tcp-proxy.traefik-host.9001=a.localhost`) produces
-      one router/service per labelled port.
-- [ ] A service with no `traefik_host` label/field does not appear in the Traefik config.
+- [ ] Response is valid Traefik HTTP provider JSON.
+- [ ] A service with `lazy-tcp-proxy.traefik-hosts=whoami.localhost:9001` produces a router with
+      rule `Host(\`whoami.localhost\`)` and service URL `http://lazy-tcp-proxy:9001`.
+- [ ] Multiple `traefik_hosts` entries produce one router+service pair each.
+- [ ] A service with no `traefik_hosts` does not appear in `GET /traefik` output.
 - [ ] `TRAEFIK_PROXY_HOST=my-host` causes service URLs to use `http://my-host:<port>`.
-- [ ] `TRAEFIK_ENTRYPOINTS=web,websecure` causes routers to include both entry points.
-- [ ] YAML fields `traefik_host` and `traefik_hosts` behave identically to their label equivalents.
-- [ ] `GET /traefik` returns valid empty JSON when no service has a `traefik_host`.
-- [ ] The `example/traefik/docker-compose.yml` starts successfully with `docker compose up`.
+- [ ] `entryPoints` is absent from generated routers (Traefik defaults to all entry points).
+- [ ] YAML `traefik_hosts` list behaves identically to the Docker label.
+- [ ] `GET /traefik` returns valid empty JSON when no service has `traefik_hosts`.
+- [ ] `example/traefik/docker-compose.yml` starts successfully with `docker compose up`.
 - [ ] `curl -H "Host: whoami.localhost" http://localhost` returns a response from the whoami
       container (routed via Traefik → lazy-tcp-proxy → whoami).
 - [ ] Existing behaviour of all other endpoints and services is unaffected.
 
+## Out of Scope / Future Extensions
+
+- **Traefik TCP section**: SNI-based domain routing for raw TCP services (requires TLS on the
+  connection end-to-end, with Traefik in passthrough mode).
+- **Traefik UDP section**: UDP has no domain routing in Traefik; entry-point-based generation
+  could be added if users want unified port management via Traefik.
+- **Middleware generation**: Generating Traefik IP allowlist/blocklist middleware from
+  lazy-tcp-proxy's `allow_list`/`block_list` per service.
+
 ## Dependencies
 
-- REQ-025 (HTTP Status Endpoint) — the `/traefik` endpoint is added to the same HTTP mux.
-- REQ-065 (Dynamic Configuration File) — `traefik_host` / `traefik_hosts` are added as fields to
-  the existing YAML service schema (`ServiceEntry` in `internal/config/store.go`).
-- REQ-001 (Core TCP Proxy) — the Traefik config reflects the live proxy state
-  (`ProxyServer.Snapshot()`).
+- REQ-025 (HTTP Status Endpoint) — `/traefik` is added to the same HTTP mux.
+- REQ-065 (Dynamic Configuration File) — `traefik_hosts` added as a field to `ServiceEntry`.
+- REQ-001 (Core TCP Proxy) — the Traefik config reflects live proxy state.
 
 ## Implementation Notes
 
-- New package: `internal/traefik/` — `config.go` with `BuildConfig(snapshots []types.Snapshot,
-  proxyHost string, entryPoints []string) TraefikConfig` function.
-- `TraefikConfig` is a Go struct that marshals cleanly to the Traefik HTTP provider JSON shape.
-- `traefik_host` / `traefik_hosts` fields are added to:
-  - `types.TargetInfo` (runtime state)
-  - `config.ServiceEntry` (YAML schema)
+- New package: `internal/traefik/` — `config.go` with
+  `BuildConfig(snapshots []proxy.Snapshot, proxyHost string) TraefikConfig`.
+- `TraefikConfig` is a Go struct that marshals to the Traefik HTTP provider JSON shape.
+- `traefik_hosts` field added to:
+  - `types.TargetInfo` (runtime state) as `[]string`
+  - `config.ServiceEntry` (YAML schema) as `[]string`
   - Docker label parser in `backend_docker.go`
+- Parsing `traefik_hosts` entries: split on `,` for labels; each entry is `domain:port` —
+  split on last `:` to extract port (accommodating IPv6 or dotted domains).
 - The `/traefik` HTTP handler calls `srv.Snapshot()` then `traefik.BuildConfig(...)`.
-- Name sanitisation: replace `_` with `-`, strip non-alphanumeric/hyphen chars, lowercase.
-- The Docker Compose example uses `traefik:v3` image with a minimal `traefik.yml` static config
-  mounted as a volume, and a `whoami` service labelled with `lazy-tcp-proxy.traefik-host`.
+- Name sanitisation function shared between router and service name generation.
