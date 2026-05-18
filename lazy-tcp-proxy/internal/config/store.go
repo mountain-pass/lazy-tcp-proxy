@@ -35,7 +35,7 @@ type ServiceEntry struct {
 	CronStart        string   `yaml:"cron_start,omitempty"        json:"cron_start,omitempty"`
 	CronStop         string   `yaml:"cron_stop,omitempty"         json:"cron_stop,omitempty"`
 	HTTPHealthCheck  string   `yaml:"http_healthcheck,omitempty"  json:"http_healthcheck,omitempty"`
-	HTTPS            bool     `yaml:"https,omitempty"             json:"https,omitempty"`
+	TLS              bool     `yaml:"tls,omitempty"               json:"tls,omitempty"`
 	APIKey           string   `yaml:"api_key,omitempty"           json:"api_key,omitempty"`
 	Scale            *int     `yaml:"scale,omitempty"             json:"scale,omitempty"`
 }
@@ -73,7 +73,7 @@ func (s *Store) Load() error {
 #    cron_start: "0 9 * * 1-5"
 #    cron_stop:  "0 17 * * 1-5"
 #    http_healthcheck: "http://{{container}}:8080/health"
-#    https: true
+#    tls: true
 #    api_key: "your-secret-key"
 `)
 		if werr := os.WriteFile(s.path, placeholder, 0o644); werr != nil {
@@ -234,7 +234,7 @@ func entryToTargetInfo(entry ServiceEntry) (types.TargetInfo, error) {
 	info.CronStart = entry.CronStart
 	info.CronStop = entry.CronStop
 	info.HTTPHealthCheck = entry.HTTPHealthCheck
-	info.HTTPS = entry.HTTPS
+	info.TLS = entry.TLS
 	info.APIKey = entry.APIKey
 
 	if entry.Scale != nil && *entry.Scale >= 1 {

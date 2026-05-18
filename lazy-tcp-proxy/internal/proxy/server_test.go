@@ -968,13 +968,13 @@ func TestStartGroup_DeduplicatesConcurrentEnsureRunning(t *testing.T) {
 	}
 }
 
-// ---- targetInfoEqual — HTTPS and APIKey ----
+// ---- targetInfoEqual — TLS and APIKey ----
 
-func TestTargetInfoEqual_HTTPSDiffers(t *testing.T) {
-	a := types.TargetInfo{Ports: []types.PortMapping{{9000, 80}}, HTTPS: false}
-	b := types.TargetInfo{Ports: []types.PortMapping{{9000, 80}}, HTTPS: true}
+func TestTargetInfoEqual_TLSDiffers(t *testing.T) {
+	a := types.TargetInfo{Ports: []types.PortMapping{{9000, 80}}, TLS: false}
+	b := types.TargetInfo{Ports: []types.PortMapping{{9000, 80}}, TLS: true}
 	if targetInfoEqual(a, b) {
-		t.Error("expected not equal when HTTPS differs")
+		t.Error("expected not equal when TLS differs")
 	}
 }
 
@@ -987,10 +987,10 @@ func TestTargetInfoEqual_APIKeyDiffers(t *testing.T) {
 }
 
 func TestTargetInfoEqual_HTTPSAndAPIKeySame(t *testing.T) {
-	a := types.TargetInfo{Ports: []types.PortMapping{{9000, 80}}, HTTPS: true, APIKey: "x"}
-	b := types.TargetInfo{Ports: []types.PortMapping{{9000, 80}}, HTTPS: true, APIKey: "x"}
+	a := types.TargetInfo{Ports: []types.PortMapping{{9000, 80}}, TLS: true, APIKey: "x"}
+	b := types.TargetInfo{Ports: []types.PortMapping{{9000, 80}}, TLS: true, APIKey: "x"}
 	if !targetInfoEqual(a, b) {
-		t.Error("expected equal when HTTPS and APIKey are identical")
+		t.Error("expected equal when TLS and APIKey are identical")
 	}
 }
 

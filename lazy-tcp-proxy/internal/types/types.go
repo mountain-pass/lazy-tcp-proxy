@@ -33,7 +33,7 @@ type TargetInfo struct {
 	CronStop        string         // 5-field cron expression; "" = not scheduled
 	HTTPHealthCheck string         // URL to poll for readiness; "" = disabled
 	HasHealthCheck  bool           // true if the container has a HEALTHCHECK configured
-	HTTPS           bool           // true → wrap listener with TLS using shared self-signed cert
+	TLS             bool           // true → wrap listener with TLS using shared self-signed cert
 	APIKey          string         // non-empty → require X-API-Key header on every HTTP request
 	DesiredReplicas int            // 0 = plain Docker container; ≥ 1 = swarm service (scale-to value)
 }

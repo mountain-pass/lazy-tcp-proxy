@@ -93,7 +93,7 @@ type targetState struct {
 	hasHealthCheck  bool           // true if the container has a Docker HEALTHCHECK configured
 	running         bool
 	removed         bool
-	httpsEnabled    bool
+	tlsEnabled    bool
 	apiKey          string
 }
 
@@ -393,7 +393,7 @@ func (s *ProxyServer) RegisterTarget(info types.TargetInfo) {
 			existing.hasHealthCheck = info.HasHealthCheck
 			existing.running = info.Running
 			existing.removed = false
-			existing.httpsEnabled = info.HTTPS
+			existing.tlsEnabled = info.TLS
 			existing.apiKey = info.APIKey
 			log.Printf("proxy: updated TCP target \033[33m%s\033[0m on port %d->%d", info.ContainerName, m.ListenPort, m.TargetPort)
 			continue
@@ -404,13 +404,13 @@ func (s *ProxyServer) RegisterTarget(info types.TargetInfo) {
 			log.Printf("proxy: failed to listen on TCP port %d for \033[33m%s\033[0m: %v", m.ListenPort, info.ContainerName, err)
 			continue
 		}
-		if info.HTTPS {
+		if info.TLS {
 			if s.tlsConfig == nil {
-				log.Printf("proxy: HTTPS requested for \033[33m%s\033[0m port %d but TLS config unavailable; falling back to plain TCP",
+				log.Printf("proxy: TLS requested for \033[33m%s\033[0m port %d but TLS config unavailable; falling back to plain TCP",
 					info.ContainerName, m.ListenPort)
 			} else {
 				ln = tls.NewListener(ln, s.tlsConfig)
-				log.Printf("proxy: HTTPS enabled for \033[33m%s\033[0m port %d", info.ContainerName, m.ListenPort)
+				log.Printf("proxy: TLS enabled for \033[33m%s\033[0m port %d", info.ContainerName, m.ListenPort)
 			}
 		}
 
@@ -424,7 +424,7 @@ func (s *ProxyServer) RegisterTarget(info types.TargetInfo) {
 			httpHealthCheck: info.HTTPHealthCheck,
 			hasHealthCheck:  info.HasHealthCheck,
 			running:         info.Running,
-			httpsEnabled:    info.HTTPS,
+			tlsEnabled:    info.TLS,
 			apiKey:          info.APIKey,
 		}
 		s.targets[m.ListenPort] = ts
@@ -539,7 +539,7 @@ func targetInfoEqual(a, b types.TargetInfo) bool {
 		a.CronStart == b.CronStart &&
 		a.CronStop == b.CronStop &&
 		a.HTTPHealthCheck == b.HTTPHealthCheck &&
-		a.HTTPS == b.HTTPS &&
+		a.TLS == b.TLS &&
 		a.APIKey == b.APIKey
 }
 
