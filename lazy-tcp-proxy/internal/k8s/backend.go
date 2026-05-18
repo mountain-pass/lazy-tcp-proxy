@@ -315,6 +315,9 @@ func (b *Backend) deploymentToTargetInfo(d appsv1.Deployment) (types.TargetInfo,
 		log.Printf("%s: http-healthcheck URL configured %q", d.Name, displayURL)
 	}
 
+	https := strings.TrimSpace(ann["lazy-tcp-proxy.https"]) == "true"
+	apiKey := strings.TrimSpace(ann["lazy-tcp-proxy.api-key"])
+
 	return types.TargetInfo{
 		ContainerID:     d.Namespace + "/" + d.Name,
 		ContainerName:   d.Name,
@@ -330,6 +333,8 @@ func (b *Backend) deploymentToTargetInfo(d appsv1.Deployment) (types.TargetInfo,
 		CronStart:       cronStart,
 		CronStop:        cronStop,
 		HTTPHealthCheck: httpHealthCheck,
+		HTTPS:           https,
+		APIKey:          apiKey,
 	}, nil
 }
 

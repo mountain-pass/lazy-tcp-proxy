@@ -230,6 +230,9 @@ func (m *Manager) containerToTargetInfo(ctx context.Context, containerID string)
 		inspect.State.Health.Status != "" &&
 		inspect.State.Health.Status != "none"
 
+	https := strings.TrimSpace(inspect.Config.Labels["lazy-tcp-proxy.https"]) == "true"
+	apiKey := strings.TrimSpace(inspect.Config.Labels["lazy-tcp-proxy.api-key"])
+
 	return types.TargetInfo{
 		ContainerID:     containerID,
 		ContainerName:   name,
@@ -247,6 +250,8 @@ func (m *Manager) containerToTargetInfo(ctx context.Context, containerID string)
 		CronStop:        cronStop,
 		HTTPHealthCheck: httpHealthCheck,
 		HasHealthCheck:  hasHealthCheck,
+		HTTPS:           https,
+		APIKey:          apiKey,
 	}, nil
 }
 

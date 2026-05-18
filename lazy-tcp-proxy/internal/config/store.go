@@ -35,6 +35,8 @@ type ServiceEntry struct {
 	CronStart        string   `yaml:"cron_start,omitempty"        json:"cron_start,omitempty"`
 	CronStop         string   `yaml:"cron_stop,omitempty"         json:"cron_stop,omitempty"`
 	HTTPHealthCheck  string   `yaml:"http_healthcheck,omitempty"  json:"http_healthcheck,omitempty"`
+	HTTPS            bool     `yaml:"https,omitempty"             json:"https,omitempty"`
+	APIKey           string   `yaml:"api_key,omitempty"           json:"api_key,omitempty"`
 }
 
 // Store manages a YAML config file on disk and the in-memory config it represents.
@@ -70,6 +72,8 @@ func (s *Store) Load() error {
 #    cron_start: "0 9 * * 1-5"
 #    cron_stop:  "0 17 * * 1-5"
 #    http_healthcheck: "http://{{container}}:8080/health"
+#    https: true
+#    api_key: "your-secret-key"
 `)
 		if werr := os.WriteFile(s.path, placeholder, 0o644); werr != nil {
 			log.Printf("config: could not create placeholder at %s: %v", s.path, werr)
@@ -228,6 +232,8 @@ func entryToTargetInfo(entry ServiceEntry) (types.TargetInfo, error) {
 	info.CronStart = entry.CronStart
 	info.CronStop = entry.CronStop
 	info.HTTPHealthCheck = entry.HTTPHealthCheck
+	info.HTTPS = entry.HTTPS
+	info.APIKey = entry.APIKey
 
 	return info, nil
 }
