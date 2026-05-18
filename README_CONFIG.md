@@ -22,6 +22,7 @@ Configuration is stored in a YAML file on disk. Changes are applied by calling
 | `CONFIG_PATH` | `/etc/lazy-tcp-proxy/config.yaml` | Path to the YAML config file |
 | `ADMIN_PORT` | `8081` | Port for the admin API server. Set to `0` to disable |
 | `ADMIN_API_KEY` | *(required if `ADMIN_PORT` > 0)* | API key for authenticating admin API requests |
+| `TRAEFIK_PROXY_HOST` | `lazy-tcp-proxy` | Hostname/IP Traefik uses to reach lazy-tcp-proxy's listen ports (see [Traefik Integration](README_LABELS.md#traefik-integration)) |
 
 If `ADMIN_PORT` is non-zero and `ADMIN_API_KEY` is not set, the proxy will refuse to start.
 
@@ -53,6 +54,10 @@ services:
 #    cron_start: "0 9 * * 1-5"
 #    cron_stop:  "0 17 * * 1-5"
 #    http_healthcheck: "http://{{container}}:8080/health"
+#    tls: true
+#    api_key: "your-secret-key"
+#    traefik_hosts:
+#      - "myapp.localhost:9000"
 ```
 
 ### Docker Compose setup
@@ -101,6 +106,10 @@ services:
     cron_start: "0 9 * * 1-5"    # start Mon–Fri at 09:00
     cron_stop:  "0 17 * * 1-5"   # stop  Mon–Fri at 17:00
     http_healthcheck: "http://{{container}}:8080/health"
+    tls: true                     # wrap listener with TLS (shared self-signed cert)
+    api_key: "your-secret-key"    # require X-API-Key header on every HTTP request
+    traefik_hosts:
+      - "myapp.localhost:9000"    # domain:listen_port pairs for Traefik HTTP provider
 ```
 
 See [README_LABELS.md](README_LABELS.md) for full descriptions of each field — the YAML fields

@@ -27,6 +27,9 @@ Add these labels to any container you want proxied/managed:
 | `lazy-tcp-proxy.cron-start` | No | 5-field cron expression — start the container/deployment on this schedule (see [Cron Scheduling](#cron-scheduling)) |
 | `lazy-tcp-proxy.cron-stop` | No | 5-field cron expression — stop the container/deployment on this schedule (see [Cron Scheduling](#cron-scheduling)) |
 | `lazy-tcp-proxy.http-healthcheck` | No | URL to poll after a cold start — proxy waits for a 2xx response before forwarding TCP traffic. Supports `{{container}}` placeholder (see [HTTP Health Check](#http-health-check)) |
+| `lazy-tcp-proxy.tls` | No | Set to `true` to wrap the listener with TLS using a shared self-signed certificate. Works with any TCP protocol, not only HTTP (see [TLS Termination](#tls-termination)) |
+| `lazy-tcp-proxy.api-key` | No | Require clients to send this value in the `X-API-Key` header on every HTTP request. Missing or incorrect key → `401 Unauthorized`. The header is stripped before forwarding (see [API Key Authentication](#api-key-authentication)) |
+| `lazy-tcp-proxy.traefik-hosts` | No | Comma-separated `<domain>:<listen_port>` pairs — exposes these mappings via `GET /traefik` for Traefik's HTTP provider (see [Traefik Integration](#traefik-integration)) |
 
 \* At least one of `lazy-tcp-proxy.ports` or `lazy-tcp-proxy.udp-ports` must be set. A container may use TCP only, UDP only, or both.
 
@@ -387,3 +390,190 @@ services:
 - Values are the `ContainerName` / Deployment name of each managed dependant.
 - If a dependant is already running/stopped, the cascade is a no-op.
 - Works with both the Docker and Kubernetes images (use Deployment annotations instead of labels in k8s mode).
+
+---
+
+## TLS Termination
+
+Set `lazy-tcp-proxy.tls=true` to wrap the container's listener with TLS. The proxy generates a **shared self-signed ECDSA (P-256) certificate** at startup (valid for 10 years) and uses it for every TLS-enabled container.
+
+Because TLS is applied at the TCP listener level (via `tls.NewListener`), it works with **any TCP protocol** — HTTP, MySQL, Redis, MQTT, custom protocols, etc. — not only HTTP.
+
+```yaml
+labels:
+  - "lazy-tcp-proxy.enabled=true"
+  - "lazy-tcp-proxy.ports=9443:8080"
+  - "lazy-tcp-proxy.tls=true"
+```
+
+Clients must connect with TLS (e.g. `https://host:9443`) and accept the self-signed certificate. Most HTTP clients can be told to skip certificate verification:
+
+```sh
+curl -k https://localhost:9443/
+```
+
+> **Note:** The self-signed certificate is regenerated on every proxy restart. It has no Subject Alternative Names (SANs) and no configured minimum TLS version — suitable for development and internal use. For production, consider terminating TLS at a reverse proxy (e.g. Traefik, nginx) instead.
+
+**Kubernetes annotation:**
+
+```yaml
+annotations:
+  lazy-tcp-proxy.enabled: "true"
+  lazy-tcp-proxy.ports: "9443:8080"
+  lazy-tcp-proxy.tls: "true"
+```
+
+---
+
+## API Key Authentication
+
+Set `lazy-tcp-proxy.api-key` to require an `X-API-Key` header on every **HTTP** request forwarded to the container.
+
+- If the header is missing or its value does not match the label exactly → the proxy responds with `HTTP/1.1 401 Unauthorized` and closes the connection.
+- If the header matches → the proxy strips it before forwarding the request to the container (the upstream never sees `X-API-Key`).
+- HTTP/1.1 keep-alive is honoured: subsequent requests on the same connection are each checked independently.
+
+```yaml
+labels:
+  - "lazy-tcp-proxy.enabled=true"
+  - "lazy-tcp-proxy.ports=9000:80"
+  - "lazy-tcp-proxy.api-key=my-secret-key"
+```
+
+**Client example:**
+
+```sh
+# Correct key — request is forwarded
+curl -H "X-API-Key: my-secret-key" http://localhost:9000/
+
+# Missing key — 401 Unauthorized
+curl http://localhost:9000/
+```
+
+**Combined TLS + API Key:**
+
+Both labels can be set together to get encrypted and authenticated access:
+
+```yaml
+labels:
+  - "lazy-tcp-proxy.enabled=true"
+  - "lazy-tcp-proxy.ports=9443:8080"
+  - "lazy-tcp-proxy.tls=true"
+  - "lazy-tcp-proxy.api-key=my-secret-key"
+```
+
+```sh
+curl -k -H "X-API-Key: my-secret-key" https://localhost:9443/
+```
+
+> **Note:** `lazy-tcp-proxy.api-key` is HTTP-specific. If you enable it on a port serving a non-HTTP protocol (MySQL, Redis, etc.), the first bytes from the client will not parse as an HTTP request and the connection will be closed immediately.
+
+**Kubernetes annotation:**
+
+```yaml
+annotations:
+  lazy-tcp-proxy.enabled: "true"
+  lazy-tcp-proxy.ports: "9000:80"
+  lazy-tcp-proxy.api-key: "my-secret-key"
+```
+
+---
+
+## Traefik Integration
+
+lazy-tcp-proxy integrates with [Traefik](https://traefik.io/traefik/) via the HTTP provider,
+enabling domain-name routing on top of the port-based proxying:
+
+```
+User → Traefik (:80 / :443) → lazy-tcp-proxy (per-service port) → proxied container
+```
+
+Traefik periodically polls `GET /traefik` on the lazy-tcp-proxy status server (default port 8080)
+and picks up any routing changes within the next poll interval (typically 5 seconds). No Traefik
+restart is needed when containers are added or removed.
+
+### Label
+
+```
+lazy-tcp-proxy.traefik-hosts=<domain>:<listen_port>
+```
+
+Each entry maps a domain name to one of this container's listen ports. Multiple entries are
+comma-separated. The `<listen_port>` is the port lazy-tcp-proxy binds on the host (the left side
+of the `ports` mapping).
+
+**Single port:**
+```yaml
+labels:
+  - "lazy-tcp-proxy.enabled=true"
+  - "lazy-tcp-proxy.ports=9001:80"
+  - "lazy-tcp-proxy.traefik-hosts=whoami.localhost:9001"
+```
+
+**Multiple domains (including from a port range):**
+```yaml
+labels:
+  - "lazy-tcp-proxy.enabled=true"
+  - "lazy-tcp-proxy.ports=9000-9099:9000-9099"
+  - "lazy-tcp-proxy.traefik-hosts=app1.localhost:9000,app2.localhost:9005"
+```
+
+### What gets generated
+
+For each `traefik-hosts` entry, lazy-tcp-proxy emits one Traefik HTTP router and one HTTP service:
+
+```json
+{
+  "http": {
+    "routers": {
+      "whoami-localhost-9001-router": {
+        "rule": "Host(`whoami.localhost`)",
+        "service": "whoami-localhost-9001-service"
+      }
+    },
+    "services": {
+      "whoami-localhost-9001-service": {
+        "loadBalancer": {
+          "servers": [{ "url": "http://lazy-tcp-proxy:9001" }]
+        }
+      }
+    }
+  }
+}
+```
+
+`entryPoints` is intentionally omitted — Traefik applies the router to all defined entry points
+by default, keeping lazy-tcp-proxy decoupled from Traefik's static config.
+
+### Environment variable
+
+| Variable | Default | Description |
+|---|---|---|
+| `TRAEFIK_PROXY_HOST` | `lazy-tcp-proxy` | Hostname/IP Traefik uses to reach lazy-tcp-proxy's listen ports |
+
+Set this to the DNS name or IP address that Traefik can use to reach lazy-tcp-proxy. In a Docker
+Compose setup, this is normally the service name (default `lazy-tcp-proxy`).
+
+### Minimal Traefik static config (`traefik.yml`)
+
+```yaml
+entryPoints:
+  web:
+    address: ":80"
+
+providers:
+  http:
+    endpoint: "http://lazy-tcp-proxy:8080/traefik"
+    pollInterval: "5s"
+```
+
+### Protocol support
+
+`traefik-hosts` only applies to **HTTP services** — Traefik's HTTP provider routes by `Host()`
+header, which requires HTTP. Raw TCP and UDP services do not benefit from domain routing via this
+integration; they continue to work directly on their listen ports.
+
+### Full Docker Compose example
+
+See [`example/traefik/`](example/traefik/) for a working example with Traefik, lazy-tcp-proxy,
+and a whoami test container.
