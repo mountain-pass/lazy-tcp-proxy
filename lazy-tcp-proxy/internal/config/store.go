@@ -36,7 +36,8 @@ type ServiceEntry struct {
 	CronStop         string   `yaml:"cron_stop,omitempty"         json:"cron_stop,omitempty"`
 	HTTPHealthCheck  string   `yaml:"http_healthcheck,omitempty"  json:"http_healthcheck,omitempty"`
 	TLS              bool     `yaml:"tls,omitempty"               json:"tls,omitempty"`
-	APIKey           string   `yaml:"api_key,omitempty"           json:"api_key,omitempty"`
+	APIKey           []string `yaml:"api_key,omitempty"           json:"api_key,omitempty"`
+	BasicAuth        []string `yaml:"basic_auth,omitempty"        json:"basic_auth,omitempty"`
 	Scale            *int     `yaml:"scale,omitempty"             json:"scale,omitempty"`
 	TraefikHosts     []string `yaml:"traefik_hosts,omitempty"     json:"traefik_hosts,omitempty"`
 }
@@ -75,7 +76,10 @@ func (s *Store) Load() error {
 #    cron_stop:  "0 17 * * 1-5"
 #    http_healthcheck: "http://{{container}}:8080/health"
 #    tls: true
-#    api_key: "your-secret-key"
+#    api_key:
+#      - "your-secret-key"
+#    basic_auth:
+#      - "user:password"
 `)
 		if werr := os.WriteFile(s.path, placeholder, 0o644); werr != nil {
 			log.Printf("config: could not create placeholder at %s: %v", s.path, werr)
@@ -237,6 +241,7 @@ func entryToTargetInfo(entry ServiceEntry) (types.TargetInfo, error) {
 	info.HTTPHealthCheck = entry.HTTPHealthCheck
 	info.TLS = entry.TLS
 	info.APIKey = entry.APIKey
+	info.BasicAuth = entry.BasicAuth
 	info.TraefikHosts = entry.TraefikHosts
 
 	if entry.Scale != nil && *entry.Scale >= 1 {

@@ -5,7 +5,9 @@ import (
 	"bytes"
 	"context"
 	crypto_rand "crypto/rand"
+	"crypto/subtle"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -94,8 +96,9 @@ type targetState struct {
 	hasHealthCheck  bool           // true if the container has a Docker HEALTHCHECK configured
 	running         bool
 	removed         bool
-	tlsEnabled    bool
-	apiKey          string
+	tlsEnabled      bool
+	apiKey          []string
+	basicAuth       []string
 }
 
 // webhookPayload is the JSON body sent to a container's webhook URL.
@@ -397,6 +400,7 @@ func (s *ProxyServer) RegisterTarget(info types.TargetInfo) {
 			existing.removed = false
 			existing.tlsEnabled = info.TLS
 			existing.apiKey = info.APIKey
+			existing.basicAuth = info.BasicAuth
 			log.Printf("proxy: updated TCP target \033[33m%s\033[0m on port %d->%d", info.ContainerName, m.ListenPort, m.TargetPort)
 			continue
 		}
@@ -426,8 +430,9 @@ func (s *ProxyServer) RegisterTarget(info types.TargetInfo) {
 			httpHealthCheck: info.HTTPHealthCheck,
 			hasHealthCheck:  info.HasHealthCheck,
 			running:         info.Running,
-			tlsEnabled:    info.TLS,
+			tlsEnabled:      info.TLS,
 			apiKey:          info.APIKey,
+			basicAuth:       info.BasicAuth,
 		}
 		s.targets[m.ListenPort] = ts
 		log.Printf("proxy: registered target \033[33m%s\033[0m, TCP %d->%d", info.ContainerName, m.ListenPort, m.TargetPort)
@@ -542,7 +547,8 @@ func targetInfoEqual(a, b types.TargetInfo) bool {
 		a.CronStop == b.CronStop &&
 		a.HTTPHealthCheck == b.HTTPHealthCheck &&
 		a.TLS == b.TLS &&
-		a.APIKey == b.APIKey &&
+		reflect.DeepEqual(a.APIKey, b.APIKey) &&
+		reflect.DeepEqual(a.BasicAuth, b.BasicAuth) &&
 		reflect.DeepEqual(a.TraefikHosts, b.TraefikHosts)
 }
 
@@ -933,7 +939,7 @@ func (s *ProxyServer) handleConn(conn net.Conn, ts *targetState) {
 
 	log.Printf("proxy: proxying connection to %s", upstream.RemoteAddr())
 
-	if ts.apiKey != "" {
+	if len(ts.apiKey) > 0 || len(ts.basicAuth) > 0 {
 		s.handleHTTPProxy(conn, upstream, ts)
 		ts.lastActive = time.Now()
 		log.Printf("proxy: connection to \033[33m%s\033[0m closed", ts.info.ContainerName)
@@ -986,16 +992,54 @@ func (s *ProxyServer) handleHTTPProxy(client, upstream net.Conn, ts *targetState
 			return // EOF or malformed request — connection done
 		}
 
-		if req.Header.Get("X-API-Key") != ts.apiKey {
-			log.Printf("proxy: api-key: rejected request to \033[33m%s\033[0m from \033[36m%s\033[0m (bad or missing key)",
-				ts.info.ContainerName, client.RemoteAddr())
-			client.Write([]byte( //nolint:errcheck
-				"HTTP/1.1 401 Unauthorized\r\n" +
-					"Content-Length: 0\r\n" +
-					"Connection: close\r\n\r\n"))
-			return
+		if len(ts.basicAuth) > 0 {
+			authHeader := req.Header.Get("Authorization")
+			const prefix = "Basic "
+			ok := false
+			if strings.HasPrefix(authHeader, prefix) {
+				decoded, err := base64.StdEncoding.DecodeString(authHeader[len(prefix):])
+				if err == nil {
+					for _, cred := range ts.basicAuth {
+						if subtle.ConstantTimeCompare(decoded, []byte(cred)) == 1 {
+							ok = true
+							break
+						}
+					}
+				}
+			}
+			if !ok {
+				log.Printf("proxy: basic-auth: rejected request to \033[33m%s\033[0m from \033[36m%s\033[0m (bad or missing credentials)",
+					ts.info.ContainerName, client.RemoteAddr())
+				client.Write([]byte( //nolint:errcheck
+					"HTTP/1.1 401 Unauthorized\r\n" +
+						"WWW-Authenticate: Basic realm=\"lazy-tcp-proxy\"\r\n" +
+						"Content-Length: 0\r\n" +
+						"Connection: close\r\n\r\n"))
+				return
+			}
+			req.Header.Del("Authorization")
 		}
-		req.Header.Del("X-API-Key")
+
+		if len(ts.apiKey) > 0 {
+			got := req.Header.Get("X-API-Key")
+			ok := false
+			for _, k := range ts.apiKey {
+				if subtle.ConstantTimeCompare([]byte(got), []byte(k)) == 1 {
+					ok = true
+					break
+				}
+			}
+			if !ok {
+				log.Printf("proxy: api-key: rejected request to \033[33m%s\033[0m from \033[36m%s\033[0m (bad or missing key)",
+					ts.info.ContainerName, client.RemoteAddr())
+				client.Write([]byte( //nolint:errcheck
+					"HTTP/1.1 401 Unauthorized\r\n" +
+						"Content-Length: 0\r\n" +
+						"Connection: close\r\n\r\n"))
+				return
+			}
+			req.Header.Del("X-API-Key")
+		}
 
 		if err := req.Write(upstream); err != nil {
 			return

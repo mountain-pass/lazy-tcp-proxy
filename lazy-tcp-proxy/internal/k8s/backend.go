@@ -328,7 +328,8 @@ func (b *Backend) deploymentToTargetInfo(d appsv1.Deployment) (types.TargetInfo,
 	}
 
 	https := strings.TrimSpace(ann["lazy-tcp-proxy.tls"]) == "true"
-	apiKey := strings.TrimSpace(ann["lazy-tcp-proxy.api-key"])
+	apiKey := types.ParseAuthList("lazy-tcp-proxy.api-key", ann["lazy-tcp-proxy.api-key"])
+	basicAuth := types.ParseAuthList("lazy-tcp-proxy.basic-auth", ann["lazy-tcp-proxy.basic-auth"])
 
 	return types.TargetInfo{
 		ContainerID:     d.Namespace + "/" + d.Name,
@@ -347,6 +348,7 @@ func (b *Backend) deploymentToTargetInfo(d appsv1.Deployment) (types.TargetInfo,
 		HTTPHealthCheck: httpHealthCheck,
 		TLS:             https,
 		APIKey:          apiKey,
+		BasicAuth:       basicAuth,
 	}, nil
 }
 

@@ -34,7 +34,8 @@ type TargetInfo struct {
 	HTTPHealthCheck string         // URL to poll for readiness; "" = disabled
 	HasHealthCheck  bool           // true if the container has a HEALTHCHECK configured
 	TLS             bool           // true → wrap listener with TLS using shared self-signed cert
-	APIKey          string         // non-empty → require X-API-Key header on every HTTP request
+	APIKey          []string       // non-empty → require X-API-Key header matching any entry
+	BasicAuth       []string       // non-empty → require Authorization: Basic matching any "user:password" entry
 	DesiredReplicas int            // 0 = plain Docker container; ≥ 1 = swarm service (scale-to value)
 	TraefikHosts    []string       // e.g. ["whoami.localhost:9001"] — domain:listen_port pairs for Traefik HTTP provider
 }
@@ -166,6 +167,19 @@ func ParseTraefikHosts(label, s string) []string {
 			continue
 		}
 		out = append(out, entry)
+	}
+	return out
+}
+
+// ParseAuthList splits a comma-separated label/annotation value into a slice
+// of trimmed, non-empty strings. Used for api-key and basic-auth lists.
+func ParseAuthList(label, s string) []string {
+	var out []string
+	for _, token := range strings.Split(s, ",") {
+		v := strings.TrimSpace(token)
+		if v != "" {
+			out = append(out, v)
+		}
 	}
 	return out
 }

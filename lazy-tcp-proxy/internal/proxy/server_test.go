@@ -979,18 +979,34 @@ func TestTargetInfoEqual_TLSDiffers(t *testing.T) {
 }
 
 func TestTargetInfoEqual_APIKeyDiffers(t *testing.T) {
-	a := types.TargetInfo{Ports: []types.PortMapping{{ListenPort: 9000, TargetPort: 80}}, APIKey: "a"}
-	b := types.TargetInfo{Ports: []types.PortMapping{{ListenPort: 9000, TargetPort: 80}}, APIKey: "b"}
+	a := types.TargetInfo{Ports: []types.PortMapping{{ListenPort: 9000, TargetPort: 80}}, APIKey: []string{"a"}}
+	b := types.TargetInfo{Ports: []types.PortMapping{{ListenPort: 9000, TargetPort: 80}}, APIKey: []string{"b"}}
 	if targetInfoEqual(a, b) {
 		t.Error("expected not equal when APIKey differs")
 	}
 }
 
+func TestTargetInfoEqual_APIKeySliceDiffers(t *testing.T) {
+	a := types.TargetInfo{Ports: []types.PortMapping{{ListenPort: 9000, TargetPort: 80}}, APIKey: []string{"key1", "key2"}}
+	b := types.TargetInfo{Ports: []types.PortMapping{{ListenPort: 9000, TargetPort: 80}}, APIKey: []string{"key1"}}
+	if targetInfoEqual(a, b) {
+		t.Error("expected not equal when APIKey slices differ")
+	}
+}
+
 func TestTargetInfoEqual_HTTPSAndAPIKeySame(t *testing.T) {
-	a := types.TargetInfo{Ports: []types.PortMapping{{ListenPort: 9000, TargetPort: 80}}, TLS: true, APIKey: "x"}
-	b := types.TargetInfo{Ports: []types.PortMapping{{ListenPort: 9000, TargetPort: 80}}, TLS: true, APIKey: "x"}
+	a := types.TargetInfo{Ports: []types.PortMapping{{ListenPort: 9000, TargetPort: 80}}, TLS: true, APIKey: []string{"x"}}
+	b := types.TargetInfo{Ports: []types.PortMapping{{ListenPort: 9000, TargetPort: 80}}, TLS: true, APIKey: []string{"x"}}
 	if !targetInfoEqual(a, b) {
 		t.Error("expected equal when TLS and APIKey are identical")
+	}
+}
+
+func TestTargetInfoEqual_BasicAuthDiffers(t *testing.T) {
+	a := types.TargetInfo{Ports: []types.PortMapping{{ListenPort: 9000, TargetPort: 80}}, BasicAuth: []string{"nick:pass1"}}
+	b := types.TargetInfo{Ports: []types.PortMapping{{ListenPort: 9000, TargetPort: 80}}, BasicAuth: []string{"nick:pass2"}}
+	if targetInfoEqual(a, b) {
+		t.Error("expected not equal when BasicAuth differs")
 	}
 }
 
@@ -1018,7 +1034,7 @@ func TestHandleHTTPProxy_CorrectKey(t *testing.T) {
 
 	ts := &targetState{
 		info:   types.TargetInfo{ContainerName: "svc"},
-		apiKey: "secret",
+		apiKey: []string{"secret"},
 	}
 	s := newTestServer()
 
@@ -1054,7 +1070,7 @@ func TestHandleHTTPProxy_MissingKey(t *testing.T) {
 
 	ts := &targetState{
 		info:   types.TargetInfo{ContainerName: "svc"},
-		apiKey: "secret",
+		apiKey: []string{"secret"},
 	}
 	s := newTestServer()
 
@@ -1088,7 +1104,7 @@ func TestHandleHTTPProxy_WrongKey(t *testing.T) {
 
 	ts := &targetState{
 		info:   types.TargetInfo{ContainerName: "svc"},
-		apiKey: "secret",
+		apiKey: []string{"secret"},
 	}
 	s := newTestServer()
 
@@ -1132,7 +1148,7 @@ func TestHandleHTTPProxy_HeaderStripped(t *testing.T) {
 
 	ts := &targetState{
 		info:   types.TargetInfo{ContainerName: "svc"},
-		apiKey: "secret",
+		apiKey: []string{"secret"},
 	}
 	s := newTestServer()
 
@@ -1156,6 +1172,253 @@ func TestHandleHTTPProxy_HeaderStripped(t *testing.T) {
 
 	if received != nil && received.Header.Get("X-API-Key") != "" {
 		t.Error("X-API-Key header should have been stripped before forwarding")
+	}
+}
+
+func TestHandleHTTPProxy_MultipleAPIKeys_AnyMatch(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+
+	upConn, err := net.Dial("tcp", upstream.Listener.Addr().String())
+	if err != nil {
+		t.Fatalf("dial upstream: %v", err)
+	}
+	defer upConn.Close() //nolint:errcheck
+
+	clientConn, proxyConn := pipeConn()
+	defer clientConn.Close() //nolint:errcheck
+
+	ts := &targetState{
+		info:   types.TargetInfo{ContainerName: "svc"},
+		apiKey: []string{"key1", "key2"},
+	}
+	s := newTestServer()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.handleHTTPProxy(proxyConn, upConn, ts)
+	}()
+
+	req, _ := http.NewRequest(http.MethodGet, "http://ignored/", nil)
+	req.Header.Set("X-API-Key", "key2")
+	req.Write(clientConn) //nolint:errcheck
+
+	resp, err := http.ReadResponse(newBufReader(clientConn), req)
+	if err != nil {
+		t.Fatalf("read response: %v", err)
+	}
+	resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("got %d, want 200", resp.StatusCode)
+	}
+	clientConn.Close() //nolint:errcheck
+	<-done
+}
+
+func TestHandleHTTPProxy_BasicAuth_CorrectCredentials(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+
+	upConn, err := net.Dial("tcp", upstream.Listener.Addr().String())
+	if err != nil {
+		t.Fatalf("dial upstream: %v", err)
+	}
+	defer upConn.Close() //nolint:errcheck
+
+	clientConn, proxyConn := pipeConn()
+	defer clientConn.Close() //nolint:errcheck
+
+	ts := &targetState{
+		info:      types.TargetInfo{ContainerName: "svc"},
+		basicAuth: []string{"nick:somepassword"},
+	}
+	s := newTestServer()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.handleHTTPProxy(proxyConn, upConn, ts)
+	}()
+
+	req, _ := http.NewRequest(http.MethodGet, "http://ignored/", nil)
+	req.SetBasicAuth("nick", "somepassword")
+	req.Write(clientConn) //nolint:errcheck
+
+	resp, err := http.ReadResponse(newBufReader(clientConn), req)
+	if err != nil {
+		t.Fatalf("read response: %v", err)
+	}
+	resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("got %d, want 200", resp.StatusCode)
+	}
+	clientConn.Close() //nolint:errcheck
+	<-done
+}
+
+func TestHandleHTTPProxy_BasicAuth_MissingHeader(t *testing.T) {
+	clientConn, proxyConn := pipeConn()
+	defer clientConn.Close() //nolint:errcheck
+
+	upClient, upServer := pipeConn()
+	defer upClient.Close() //nolint:errcheck
+	defer upServer.Close() //nolint:errcheck
+
+	ts := &targetState{
+		info:      types.TargetInfo{ContainerName: "svc"},
+		basicAuth: []string{"nick:somepassword"},
+	}
+	s := newTestServer()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.handleHTTPProxy(proxyConn, upClient, ts)
+	}()
+
+	req, _ := http.NewRequest(http.MethodGet, "http://ignored/", nil)
+	req.Write(clientConn) //nolint:errcheck
+
+	resp, err := http.ReadResponse(newBufReader(clientConn), req)
+	if err != nil {
+		t.Fatalf("read response: %v", err)
+	}
+	resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("got %d, want 401", resp.StatusCode)
+	}
+	if resp.Header.Get("WWW-Authenticate") == "" {
+		t.Error("expected WWW-Authenticate header in 401 response")
+	}
+	<-done
+}
+
+func TestHandleHTTPProxy_BasicAuth_WrongCredentials(t *testing.T) {
+	clientConn, proxyConn := pipeConn()
+	defer clientConn.Close() //nolint:errcheck
+
+	upClient, upServer := pipeConn()
+	defer upClient.Close() //nolint:errcheck
+	defer upServer.Close() //nolint:errcheck
+
+	ts := &targetState{
+		info:      types.TargetInfo{ContainerName: "svc"},
+		basicAuth: []string{"nick:somepassword"},
+	}
+	s := newTestServer()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.handleHTTPProxy(proxyConn, upClient, ts)
+	}()
+
+	req, _ := http.NewRequest(http.MethodGet, "http://ignored/", nil)
+	req.SetBasicAuth("nick", "wrongpassword")
+	req.Write(clientConn) //nolint:errcheck
+
+	resp, err := http.ReadResponse(newBufReader(clientConn), req)
+	if err != nil {
+		t.Fatalf("read response: %v", err)
+	}
+	resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("got %d, want 401", resp.StatusCode)
+	}
+	<-done
+}
+
+func TestHandleHTTPProxy_BasicAuth_MultipleCredentials_AnyMatch(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+
+	upConn, err := net.Dial("tcp", upstream.Listener.Addr().String())
+	if err != nil {
+		t.Fatalf("dial upstream: %v", err)
+	}
+	defer upConn.Close() //nolint:errcheck
+
+	clientConn, proxyConn := pipeConn()
+	defer clientConn.Close() //nolint:errcheck
+
+	ts := &targetState{
+		info:      types.TargetInfo{ContainerName: "svc"},
+		basicAuth: []string{"nick:pass1", "alice:otherpass"},
+	}
+	s := newTestServer()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.handleHTTPProxy(proxyConn, upConn, ts)
+	}()
+
+	req, _ := http.NewRequest(http.MethodGet, "http://ignored/", nil)
+	req.SetBasicAuth("alice", "otherpass")
+	req.Write(clientConn) //nolint:errcheck
+
+	resp, err := http.ReadResponse(newBufReader(clientConn), req)
+	if err != nil {
+		t.Fatalf("read response: %v", err)
+	}
+	resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("got %d, want 200", resp.StatusCode)
+	}
+	clientConn.Close() //nolint:errcheck
+	<-done
+}
+
+func TestHandleHTTPProxy_BasicAuth_HeaderStripped(t *testing.T) {
+	var received *http.Request
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		received = r
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+
+	upConn, err := net.Dial("tcp", upstream.Listener.Addr().String())
+	if err != nil {
+		t.Fatalf("dial upstream: %v", err)
+	}
+	defer upConn.Close() //nolint:errcheck
+
+	clientConn, proxyConn := pipeConn()
+	defer clientConn.Close() //nolint:errcheck
+
+	ts := &targetState{
+		info:      types.TargetInfo{ContainerName: "svc"},
+		basicAuth: []string{"nick:somepassword"},
+	}
+	s := newTestServer()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.handleHTTPProxy(proxyConn, upConn, ts)
+	}()
+
+	req, _ := http.NewRequest(http.MethodGet, "http://ignored/", nil)
+	req.SetBasicAuth("nick", "somepassword")
+	req.Write(clientConn) //nolint:errcheck
+
+	resp, err := http.ReadResponse(newBufReader(clientConn), req)
+	if err != nil {
+		t.Fatalf("read response: %v", err)
+	}
+	resp.Body.Close() //nolint:errcheck
+	clientConn.Close() //nolint:errcheck
+	<-done
+
+	if received != nil && received.Header.Get("Authorization") != "" {
+		t.Error("Authorization header should have been stripped before forwarding")
 	}
 }
 
