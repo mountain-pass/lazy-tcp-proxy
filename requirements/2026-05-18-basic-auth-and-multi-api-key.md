@@ -2,7 +2,7 @@
 
 **Date Added**: 2026-05-18
 **Priority**: High
-**Status**: Planned
+**Status**: In Progress
 
 ## Problem Statement
 
@@ -23,9 +23,8 @@ Additionally, the current `api_key` configuration accepts only a single value, w
 
 ### Multi-Value API Key (`api_key`)
 
-- `api_key` is changed from a single string to a list of strings.
+- `api_key` is changed from a single string to a list of strings. Only the array form is supported going forward; single-string YAML is no longer valid.
 - If **any** value in the list matches the `X-API-Key` header, the request is allowed.
-- Single-string YAML (`api_key: "key"`) remains valid via a backward-compatible custom YAML unmarshaler.
 - Docker/Kubernetes label format: comma-separated values, e.g. `lazy-tcp-proxy.api-key=key1,key2`.
 
 ### Combined usage
@@ -70,7 +69,7 @@ annotations:
 
 - `types.TargetInfo.APIKey` changes from `string` to `[]string`.
 - A new `types.TargetInfo.BasicAuth` field is added as `[]string` (each entry is `user:password`).
-- YAML `ServiceEntry.APIKey` uses a custom `StringOrSlice` type so that both `api_key: "key"` and `api_key: ["key"]` are valid.
+- YAML `ServiceEntry.APIKey` is `[]string`; only the array form is accepted.
 - YAML `ServiceEntry.BasicAuth` is `[]string`.
 - Docker/K8s label parsing: `lazy-tcp-proxy.api-key` is split on commas; `lazy-tcp-proxy.basic-auth` is split on commas.
 - `handleHTTPProxy` checks `basic_auth` first (if set), then `api_key` (if set). Each is independently evaluated; rejection on either failure.
@@ -85,7 +84,6 @@ annotations:
 - [ ] A request with any of the listed credentials is forwarded (header stripped).
 - [ ] `lazy-tcp-proxy.basic-auth=nick:pass` Docker label behaves identically to the YAML setting.
 - [ ] `api_key: ["key1", "key2"]` YAML accepts requests with either key.
-- [ ] `api_key: "key"` YAML (old single-string form) still works (backward compat).
 - [ ] `lazy-tcp-proxy.api-key=key1,key2` Docker label accepts requests with either key.
 - [ ] `targetInfoEqual` returns false when `APIKey` lists differ.
 - [ ] `targetInfoEqual` returns false when `BasicAuth` lists differ.
@@ -99,7 +97,6 @@ annotations:
 
 ## Implementation Notes
 
-- `StringOrSlice` custom YAML type: implements `yaml.Unmarshaler`; on unmarshal, if the node is a scalar it wraps it in a single-element slice; if it is a sequence it decodes normally.
 - Basic Auth check: `encoding/base64` decode the value after stripping the `Basic ` prefix from the `Authorization` header. Compare decoded `user:password` against each entry in `BasicAuth`. Constant-time comparison (`subtle.ConstantTimeCompare`) should be used to avoid timing attacks.
 - API key check similarly uses constant-time comparison for each candidate key.
 - `WWW-Authenticate: Basic realm="lazy-tcp-proxy"` is included in 401 responses for Basic Auth so browsers show a login dialog.
