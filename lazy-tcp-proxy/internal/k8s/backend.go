@@ -242,6 +242,9 @@ func (b *Backend) WatchServiceEvents(_ context.Context, _ types.TargetHandler) {
 // NotifyTargets is a no-op for the k8s backend (swarm registry not applicable).
 func (b *Backend) NotifyTargets(_ []types.TargetInfo) {}
 
+// JoinNetworksForContainerNames is a no-op for the k8s backend (no Docker networks).
+func (b *Backend) JoinNetworksForContainerNames(_ context.Context, _ []string) {}
+
 // DefaultTargetID returns "namespace/name" for use as a ContainerID when a
 // YAML config entry has no matching discovered Deployment.
 func (b *Backend) DefaultTargetID(name string) string {

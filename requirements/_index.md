@@ -78,4 +78,4 @@
 | REQ-074 | Fix CVE: Upgrade go.opentelemetry.io/otel to 1.41.0                     | High   | Completed   | 2026-05-18 | [2026-05-18-fix-otel-cve-1.41.0.md](2026-05-18-fix-otel-cve-1.41.0.md) |
 | REQ-075 | Traefik Entrypoint and CertResolver Configuration                        | High   | Completed   | 2026-05-18 | [2026-05-18-traefik-entrypoint-certresolver.md](2026-05-18-traefik-entrypoint-certresolver.md) |
 | REQ-076 | Traefik Default Environment Variable Values                              | Low    | Completed     | 2026-05-18 | [2026-05-18-traefik-default-env-vars.md](2026-05-18-traefik-default-env-vars.md) |
-| REQ-077 | Auto-Join Docker Networks for Static Config Targets                      | High   | Planned       | 2026-05-18 | [2026-05-18-join-networks-for-config-targets.md](2026-05-18-join-networks-for-config-targets.md) |
+| REQ-077 | Auto-Join Docker Networks for Static Config Targets                      | High   | Completed     | 2026-05-18 | [2026-05-18-join-networks-for-config-targets.md](2026-05-18-join-networks-for-config-targets.md) |

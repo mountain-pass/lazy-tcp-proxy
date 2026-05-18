@@ -338,6 +338,10 @@ type backendManager interface {
 	// NotifyTargets syncs internal backend state (e.g. swarm service registry)
 	// from the merged target list after config overlay is applied.
 	NotifyTargets(targets []types.TargetInfo)
+	// JoinNetworksForContainerNames inspects each named container and joins its
+	// Docker networks. Used to connect the proxy to networks for config-only
+	// targets that are not discovered via Docker labels. No-op on Kubernetes.
+	JoinNetworksForContainerNames(ctx context.Context, names []string)
 }
 
 // discoverAndApply runs backend discovery, applies the YAML config overlay,
@@ -355,6 +359,15 @@ func discoverAndApply(ctx context.Context, mgr backendManager, store *config.Sto
 		log.Printf("config apply warning: %v", e)
 	}
 	mgr.NotifyTargets(merged)
+
+	var configOnlyNames []string
+	for _, t := range merged {
+		if len(t.NetworkIDs) == 0 {
+			configOnlyNames = append(configOnlyNames, t.ContainerName)
+		}
+	}
+	mgr.JoinNetworksForContainerNames(ctx, configOnlyNames)
+
 	srv.Update(merged)
 	return nil
 }

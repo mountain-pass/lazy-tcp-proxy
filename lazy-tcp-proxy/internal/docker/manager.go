@@ -320,6 +320,27 @@ func (m *Manager) JoinNetworks(ctx context.Context, networkIDs []string) ([]stri
 	return joined, nil
 }
 
+// JoinNetworksForContainerNames inspects each container by name and joins its networks.
+// Containers that do not exist are silently skipped. This is used to connect the proxy
+// to networks for config-only targets that lack the lazy-tcp-proxy.enabled label.
+func (m *Manager) JoinNetworksForContainerNames(ctx context.Context, names []string) {
+	for _, name := range names {
+		result, err := m.cli.ContainerInspect(ctx, name, client.ContainerInspectOptions{})
+		if err != nil {
+			continue
+		}
+		var networkIDs []string
+		for _, ep := range result.Container.NetworkSettings.Networks {
+			if ep.NetworkID != "" {
+				networkIDs = append(networkIDs, ep.NetworkID)
+			}
+		}
+		if _, err := m.JoinNetworks(ctx, networkIDs); err != nil {
+			log.Printf("docker: failed to join networks for \033[33m%s\033[0m: %v", name, err)
+		}
+	}
+}
+
 // LeaveNetworks disconnects the proxy container from all networks it joined at runtime.
 func (m *Manager) LeaveNetworks(ctx context.Context) {
 	if m.selfID == "" {
