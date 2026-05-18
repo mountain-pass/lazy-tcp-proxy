@@ -38,6 +38,7 @@ type ServiceEntry struct {
 	TLS              bool     `yaml:"tls,omitempty"               json:"tls,omitempty"`
 	APIKey           string   `yaml:"api_key,omitempty"           json:"api_key,omitempty"`
 	Scale            *int     `yaml:"scale,omitempty"             json:"scale,omitempty"`
+	TraefikHosts     []string `yaml:"traefik_hosts,omitempty"     json:"traefik_hosts,omitempty"`
 }
 
 // Store manages a YAML config file on disk and the in-memory config it represents.
@@ -236,6 +237,7 @@ func entryToTargetInfo(entry ServiceEntry) (types.TargetInfo, error) {
 	info.HTTPHealthCheck = entry.HTTPHealthCheck
 	info.TLS = entry.TLS
 	info.APIKey = entry.APIKey
+	info.TraefikHosts = entry.TraefikHosts
 
 	if entry.Scale != nil && *entry.Scale >= 1 {
 		info.DesiredReplicas = *entry.Scale

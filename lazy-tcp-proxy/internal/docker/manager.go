@@ -235,6 +235,11 @@ func (m *Manager) containerToTargetInfo(ctx context.Context, containerID string)
 	https := strings.TrimSpace(inspect.Config.Labels["lazy-tcp-proxy.tls"]) == "true"
 	apiKey := strings.TrimSpace(inspect.Config.Labels["lazy-tcp-proxy.api-key"])
 
+	var traefikHosts []string
+	if v := strings.TrimSpace(inspect.Config.Labels["lazy-tcp-proxy.traefik-hosts"]); v != "" {
+		traefikHosts = types.ParseTraefikHosts("lazy-tcp-proxy.traefik-hosts", v)
+	}
+
 	return types.TargetInfo{
 		ContainerID:     containerID,
 		ContainerName:   name,
@@ -254,6 +259,7 @@ func (m *Manager) containerToTargetInfo(ctx context.Context, containerID string)
 		HasHealthCheck:  hasHealthCheck,
 		TLS:             https,
 		APIKey:          apiKey,
+		TraefikHosts:    traefikHosts,
 	}, nil
 }
 
@@ -721,6 +727,11 @@ func (m *Manager) serviceToTargetInfo(svc swarm.Service) (types.TargetInfo, erro
 	cronStop := parseCronLabel(name, "lazy-tcp-proxy.cron-stop", labels["lazy-tcp-proxy.cron-stop"])
 	httpHealthCheck := types.ParseHTTPHealthCheckLabel(name, labels["lazy-tcp-proxy.http-healthcheck"])
 
+	var traefikHosts []string
+	if v := strings.TrimSpace(labels["lazy-tcp-proxy.traefik-hosts"]); v != "" {
+		traefikHosts = types.ParseTraefikHosts("lazy-tcp-proxy.traefik-hosts", v)
+	}
+
 	running := svc.ServiceStatus != nil && svc.ServiceStatus.RunningTasks > 0
 
 	return types.TargetInfo{
@@ -741,6 +752,7 @@ func (m *Manager) serviceToTargetInfo(svc swarm.Service) (types.TargetInfo, erro
 		HTTPHealthCheck: httpHealthCheck,
 		HasHealthCheck:  false,
 		DesiredReplicas: scale,
+		TraefikHosts:    traefikHosts,
 	}, nil
 }
 

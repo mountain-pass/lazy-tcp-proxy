@@ -36,6 +36,7 @@ type TargetInfo struct {
 	TLS             bool           // true → wrap listener with TLS using shared self-signed cert
 	APIKey          string         // non-empty → require X-API-Key header on every HTTP request
 	DesiredReplicas int            // 0 = plain Docker container; ≥ 1 = swarm service (scale-to value)
+	TraefikHosts    []string       // e.g. ["whoami.localhost:9001"] — domain:listen_port pairs for Traefik HTTP provider
 }
 
 // TargetHandler is implemented by the proxy server to receive target updates.
@@ -144,6 +145,29 @@ func ParseIdleTimeoutLabel(name, raw string) *time.Duration {
 	}
 	d := time.Duration(n) * time.Second
 	return &d
+}
+
+// ParseTraefikHosts parses a comma-separated list of "domain:listen_port" entries
+// from the lazy-tcp-proxy.traefik-hosts label. Invalid entries are skipped with a warning.
+func ParseTraefikHosts(label, s string) []string {
+	var out []string
+	for _, token := range strings.Split(s, ",") {
+		entry := strings.TrimSpace(token)
+		if entry == "" {
+			continue
+		}
+		idx := strings.LastIndex(entry, ":")
+		if idx < 1 {
+			log.Printf("label %s: ignoring invalid traefik-hosts entry %q: expected domain:port", label, entry)
+			continue
+		}
+		if _, err := strconv.Atoi(entry[idx+1:]); err != nil {
+			log.Printf("label %s: ignoring invalid traefik-hosts entry %q: port must be an integer", label, entry)
+			continue
+		}
+		out = append(out, entry)
+	}
+	return out
 }
 
 // ParseHTTPHealthCheckLabel validates the http-healthcheck URL template and

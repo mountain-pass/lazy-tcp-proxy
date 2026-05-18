@@ -43,6 +43,7 @@ type TargetSnapshot struct {
 	ActiveConns        int32      `json:"active_conns"`
 	LastActive         *time.Time `json:"last_active"`
 	LastActiveRelative string     `json:"last_active_relative"`
+	TraefikHosts       []string   `json:"traefik_hosts,omitempty"`
 }
 
 // relativeTime returns a human-readable string describing how long ago t was,
@@ -317,6 +318,7 @@ func (s *ProxyServer) Snapshot() []TargetSnapshot {
 			ActiveConns:        ts.activeConns.Load(),
 			LastActive:         &t,
 			LastActiveRelative: relativeTime(effective, now),
+			TraefikHosts:       ts.info.TraefikHosts,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -540,7 +542,8 @@ func targetInfoEqual(a, b types.TargetInfo) bool {
 		a.CronStop == b.CronStop &&
 		a.HTTPHealthCheck == b.HTTPHealthCheck &&
 		a.TLS == b.TLS &&
-		a.APIKey == b.APIKey
+		a.APIKey == b.APIKey &&
+		reflect.DeepEqual(a.TraefikHosts, b.TraefikHosts)
 }
 
 // Update reconciles the proxy's registered targets with newTargets.

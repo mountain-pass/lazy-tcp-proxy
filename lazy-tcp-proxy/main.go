@@ -16,6 +16,7 @@ import (
 	"github.com/mountain-pass/lazy-tcp-proxy/internal/config"
 	"github.com/mountain-pass/lazy-tcp-proxy/internal/proxy"
 	"github.com/mountain-pass/lazy-tcp-proxy/internal/scheduler"
+	traefikpkg "github.com/mountain-pass/lazy-tcp-proxy/internal/traefik"
 	"github.com/mountain-pass/lazy-tcp-proxy/internal/types"
 )
 
@@ -100,6 +101,13 @@ func resolveConfigPath() string {
 		return v
 	}
 	return defaultConfigPath
+}
+
+func resolveTraefikProxyHost() string {
+	if v := os.Getenv("TRAEFIK_PROXY_HOST"); v != "" {
+		return v
+	}
+	return "lazy-tcp-proxy"
 }
 
 const statusDashboardHTML = `<!DOCTYPE html>
@@ -232,13 +240,22 @@ const statusDashboardHTML = `<!DOCTYPE html>
 </body>
 </html>`
 
-func runStatusServer(ctx context.Context, srv *proxy.ProxyServer, port int) {
+func runStatusServer(ctx context.Context, srv *proxy.ProxyServer, port int, traefikProxyHost string) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
 		enc.Encode(srv.Snapshot()) //nolint:errcheck
+	})
+	mux.HandleFunc("/traefik", func(w http.ResponseWriter, r *http.Request) {
+		raw := srv.Snapshot()
+		snaps := make([]traefikpkg.Snapshot, len(raw))
+		for i, s := range raw {
+			snaps[i] = traefikpkg.Snapshot{ListenPort: s.ListenPort, TraefikHosts: s.TraefikHosts}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(traefikpkg.BuildConfig(snaps, traefikProxyHost)) //nolint:errcheck
 	})
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -356,11 +373,13 @@ func main() {
 
 	// Start the HTTP status server
 	statusPort := resolveStatusPort()
+	traefikProxyHost := resolveTraefikProxyHost()
 	if statusPort == 0 {
 		log.Println("status server: disabled (STATUS_PORT=0)")
 	} else {
 		log.Printf("status server: listening on :%d (set STATUS_PORT=0 to disable)", statusPort)
-		runStatusServer(ctx, srv, statusPort)
+		log.Printf("traefik provider: GET /traefik available (TRAEFIK_PROXY_HOST=%s)", traefikProxyHost)
+		runStatusServer(ctx, srv, statusPort, traefikProxyHost)
 	}
 
 	// Load dynamic config file
