@@ -70,4 +70,4 @@
 | REQ-066 | Config Placeholder — Commented Example                                   | Low    | Completed   | 2026-05-15 | [2026-05-15-config-placeholder-example.md](2026-05-15-config-placeholder-example.md) |
 | REQ-067 | Per-Service TLS Termination and API Key Authentication                   | High   | Completed   | 2026-05-15 | [2026-05-15-per-service-tls-and-api-key.md](2026-05-15-per-service-tls-and-api-key.md) |
 | REQ-068 | Docker Stack Service Scaling                                             | High   | Completed   | 2026-05-15 | [2026-05-15-docker-stack-scaling.md](2026-05-15-docker-stack-scaling.md) |
-| REQ-069 | Traefik Integration (HTTP Provider Endpoint)                             | High   | Planned     | 2026-05-18 | [2026-05-18-traefik-integration.md](2026-05-18-traefik-integration.md) |
+| REQ-069 | Traefik Integration (HTTP Provider Endpoint)                             | High   | In Progress | 2026-05-18 | [2026-05-18-traefik-integration.md](2026-05-18-traefik-integration.md) |
