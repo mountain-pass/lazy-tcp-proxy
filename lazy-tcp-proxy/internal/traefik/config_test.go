@@ -6,7 +6,7 @@ import (
 
 func TestBuildConfig_SingleHost(t *testing.T) {
 	snaps := []Snapshot{{ListenPort: 9001, TraefikHosts: []string{"whoami.localhost:9001"}}}
-	cfg := BuildConfig(snaps, "lazy-tcp-proxy")
+	cfg := BuildConfig(snaps, "lazy-tcp-proxy", "", "")
 
 	if len(cfg.HTTP.Routers) != 1 {
 		t.Fatalf("expected 1 router, got %d", len(cfg.HTTP.Routers))
@@ -34,7 +34,7 @@ func TestBuildConfig_SingleHost(t *testing.T) {
 func TestBuildConfig_PortMismatch(t *testing.T) {
 	// entry port (9002) does not match snapshot ListenPort (9001) — should be skipped
 	snaps := []Snapshot{{ListenPort: 9001, TraefikHosts: []string{"whoami.localhost:9002"}}}
-	cfg := BuildConfig(snaps, "lazy-tcp-proxy")
+	cfg := BuildConfig(snaps, "lazy-tcp-proxy", "", "")
 
 	if len(cfg.HTTP.Routers) != 0 {
 		t.Errorf("expected 0 routers, got %d", len(cfg.HTTP.Routers))
@@ -43,7 +43,7 @@ func TestBuildConfig_PortMismatch(t *testing.T) {
 
 func TestBuildConfig_MultipleHostsSamePort(t *testing.T) {
 	snaps := []Snapshot{{ListenPort: 9001, TraefikHosts: []string{"app-a.localhost:9001", "app-b.localhost:9001"}}}
-	cfg := BuildConfig(snaps, "lazy-tcp-proxy")
+	cfg := BuildConfig(snaps, "lazy-tcp-proxy", "", "")
 
 	if len(cfg.HTTP.Routers) != 2 {
 		t.Errorf("expected 2 routers, got %d", len(cfg.HTTP.Routers))
@@ -58,7 +58,7 @@ func TestBuildConfig_MultipleSnapshots(t *testing.T) {
 		{ListenPort: 9001, TraefikHosts: []string{"app1.localhost:9001"}},
 		{ListenPort: 9002, TraefikHosts: []string{"app2.localhost:9002"}},
 	}
-	cfg := BuildConfig(snaps, "lazy-tcp-proxy")
+	cfg := BuildConfig(snaps, "lazy-tcp-proxy", "", "")
 
 	if len(cfg.HTTP.Routers) != 2 {
 		t.Errorf("expected 2 routers, got %d", len(cfg.HTTP.Routers))
@@ -67,7 +67,7 @@ func TestBuildConfig_MultipleSnapshots(t *testing.T) {
 
 func TestBuildConfig_NoHosts(t *testing.T) {
 	snaps := []Snapshot{{ListenPort: 9001, TraefikHosts: nil}}
-	cfg := BuildConfig(snaps, "lazy-tcp-proxy")
+	cfg := BuildConfig(snaps, "lazy-tcp-proxy", "", "")
 
 	if len(cfg.HTTP.Routers) != 0 || len(cfg.HTTP.Services) != 0 {
 		t.Errorf("expected empty config, got %+v", cfg)
@@ -75,7 +75,7 @@ func TestBuildConfig_NoHosts(t *testing.T) {
 }
 
 func TestBuildConfig_EmptySnapshots(t *testing.T) {
-	cfg := BuildConfig(nil, "lazy-tcp-proxy")
+	cfg := BuildConfig(nil, "lazy-tcp-proxy", "", "")
 
 	if len(cfg.HTTP.Routers) != 0 || len(cfg.HTTP.Services) != 0 {
 		t.Errorf("expected empty config, got %+v", cfg)
@@ -84,7 +84,7 @@ func TestBuildConfig_EmptySnapshots(t *testing.T) {
 
 func TestBuildConfig_CustomProxyHost(t *testing.T) {
 	snaps := []Snapshot{{ListenPort: 9001, TraefikHosts: []string{"app.localhost:9001"}}}
-	cfg := BuildConfig(snaps, "10.0.0.5")
+	cfg := BuildConfig(snaps, "10.0.0.5", "", "")
 
 	svc := cfg.HTTP.Services["app-localhost-9001-service"]
 	if svc.LoadBalancer.Servers[0].URL != "http://10.0.0.5:9001" {
@@ -94,11 +94,63 @@ func TestBuildConfig_CustomProxyHost(t *testing.T) {
 
 func TestBuildConfig_MalformedEntrySkipped(t *testing.T) {
 	snaps := []Snapshot{{ListenPort: 9001, TraefikHosts: []string{"noport", "bad:xyz", "ok.localhost:9001"}}}
-	cfg := BuildConfig(snaps, "lazy-tcp-proxy")
+	cfg := BuildConfig(snaps, "lazy-tcp-proxy", "", "")
 
 	// Only the valid entry should produce output
 	if len(cfg.HTTP.Routers) != 1 {
 		t.Errorf("expected 1 router, got %d", len(cfg.HTTP.Routers))
+	}
+}
+
+func TestBuildConfig_WithEntryPoint(t *testing.T) {
+	snaps := []Snapshot{{ListenPort: 9001, TraefikHosts: []string{"app.localhost:9001"}}}
+	cfg := BuildConfig(snaps, "lazy-tcp-proxy", "websecure", "")
+
+	r := cfg.HTTP.Routers["app-localhost-9001-router"]
+	if len(r.EntryPoints) != 1 || r.EntryPoints[0] != "websecure" {
+		t.Errorf("expected entryPoints=[websecure], got %v", r.EntryPoints)
+	}
+	if r.TLS != nil {
+		t.Errorf("expected no tls, got %+v", r.TLS)
+	}
+}
+
+func TestBuildConfig_WithCertResolver(t *testing.T) {
+	snaps := []Snapshot{{ListenPort: 9001, TraefikHosts: []string{"app.localhost:9001"}}}
+	cfg := BuildConfig(snaps, "lazy-tcp-proxy", "", "myresolver")
+
+	r := cfg.HTTP.Routers["app-localhost-9001-router"]
+	if r.EntryPoints != nil {
+		t.Errorf("expected no entryPoints, got %v", r.EntryPoints)
+	}
+	if r.TLS == nil || r.TLS.CertResolver != "myresolver" {
+		t.Errorf("expected tls.certResolver=myresolver, got %+v", r.TLS)
+	}
+}
+
+func TestBuildConfig_WithBoth(t *testing.T) {
+	snaps := []Snapshot{{ListenPort: 9001, TraefikHosts: []string{"app.localhost:9001"}}}
+	cfg := BuildConfig(snaps, "lazy-tcp-proxy", "websecure", "myresolver")
+
+	r := cfg.HTTP.Routers["app-localhost-9001-router"]
+	if len(r.EntryPoints) != 1 || r.EntryPoints[0] != "websecure" {
+		t.Errorf("expected entryPoints=[websecure], got %v", r.EntryPoints)
+	}
+	if r.TLS == nil || r.TLS.CertResolver != "myresolver" {
+		t.Errorf("expected tls.certResolver=myresolver, got %+v", r.TLS)
+	}
+}
+
+func TestBuildConfig_NeitherSet(t *testing.T) {
+	snaps := []Snapshot{{ListenPort: 9001, TraefikHosts: []string{"app.localhost:9001"}}}
+	cfg := BuildConfig(snaps, "lazy-tcp-proxy", "", "")
+
+	r := cfg.HTTP.Routers["app-localhost-9001-router"]
+	if r.EntryPoints != nil {
+		t.Errorf("expected no entryPoints, got %v", r.EntryPoints)
+	}
+	if r.TLS != nil {
+		t.Errorf("expected no tls, got %+v", r.TLS)
 	}
 }
 

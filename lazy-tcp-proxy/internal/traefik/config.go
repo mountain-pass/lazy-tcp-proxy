@@ -25,12 +25,17 @@ type HTTPConfig struct {
 	Services map[string]HTTPService `json:"services"`
 }
 
+// RouterTLS holds the TLS options for a Traefik HTTP router.
+type RouterTLS struct {
+	CertResolver string `json:"certResolver,omitempty"`
+}
+
 // HTTPRouter is a single Traefik HTTP router entry.
-// entryPoints is intentionally omitted — Traefik applies the router to all
-// defined entry points when the field is absent.
 type HTTPRouter struct {
-	Rule    string `json:"rule"`
-	Service string `json:"service"`
+	Rule        string     `json:"rule"`
+	Service     string     `json:"service"`
+	EntryPoints []string   `json:"entryPoints,omitempty"`
+	TLS         *RouterTLS `json:"tls,omitempty"`
 }
 
 // HTTPService is a single Traefik HTTP service entry.
@@ -69,8 +74,9 @@ func sanitiseName(s string) string {
 // BuildConfig builds a Traefik HTTP provider config from a slice of proxy
 // snapshots. For each traefik_hosts entry whose port matches the snapshot's
 // ListenPort, one router+service pair is emitted. proxyHost is the hostname
-// Traefik uses to reach lazy-tcp-proxy (e.g. "lazy-tcp-proxy").
-func BuildConfig(snapshots []Snapshot, proxyHost string) TraefikConfig {
+// Traefik uses to reach lazy-tcp-proxy (e.g. "lazy-tcp-proxy"). entryPoint
+// and certResolver are applied to every emitted router when non-empty.
+func BuildConfig(snapshots []Snapshot, proxyHost, entryPoint, certResolver string) TraefikConfig {
 	routers := make(map[string]HTTPRouter)
 	services := make(map[string]HTTPService)
 
@@ -90,10 +96,17 @@ func BuildConfig(snapshots []Snapshot, proxyHost string) TraefikConfig {
 			routerName := name + "-router"
 			serviceName := name + "-service"
 
-			routers[routerName] = HTTPRouter{
+			router := HTTPRouter{
 				Rule:    fmt.Sprintf("Host(`%s`)", domain),
 				Service: serviceName,
 			}
+			if entryPoint != "" {
+				router.EntryPoints = []string{entryPoint}
+			}
+			if certResolver != "" {
+				router.TLS = &RouterTLS{CertResolver: certResolver}
+			}
+			routers[routerName] = router
 			services[serviceName] = HTTPService{
 				LoadBalancer: LoadBalancer{
 					Servers: []Server{{URL: fmt.Sprintf("http://%s:%d", proxyHost, port)}},

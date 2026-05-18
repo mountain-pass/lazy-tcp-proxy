@@ -542,14 +542,16 @@ For each `traefik-hosts` entry, lazy-tcp-proxy emits one Traefik HTTP router and
 }
 ```
 
-`entryPoints` is intentionally omitted — Traefik applies the router to all defined entry points
-by default, keeping lazy-tcp-proxy decoupled from Traefik's static config.
+`entryPoints` and `tls` are omitted by default — Traefik applies the router to all defined entry
+points with no TLS configuration. Set `TRAEFIK_ENTRYPOINT` and `TRAEFIK_CERTRESOLVER` to add them.
 
 ### Environment variable
 
 | Variable | Default | Description |
 |---|---|---|
 | `TRAEFIK_PROXY_HOST` | `lazy-tcp-proxy` | Hostname/IP Traefik uses to reach lazy-tcp-proxy's listen ports |
+| `TRAEFIK_ENTRYPOINT` | *(unset)* | When set, adds `"entryPoints": ["<value>"]` to every generated Traefik HTTP router |
+| `TRAEFIK_CERTRESOLVER` | *(unset)* | When set, adds `"tls": {"certResolver": "<value>"}` to every generated Traefik HTTP router |
 
 Set this to the DNS name or IP address that Traefik can use to reach lazy-tcp-proxy. In a Docker
 Compose setup, this is normally the service name (default `lazy-tcp-proxy`).

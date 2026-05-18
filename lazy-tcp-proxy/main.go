@@ -80,7 +80,7 @@ func resolveStatusPort() int {
 	return n // 0 means disabled
 }
 
-const defaultAdminPort = 8081
+const defaultAdminPort = 0
 const defaultConfigPath = "/etc/lazy-tcp-proxy/config.yaml"
 
 func resolveAdminPort() int {
@@ -108,6 +108,14 @@ func resolveTraefikProxyHost() string {
 		return v
 	}
 	return "lazy-tcp-proxy"
+}
+
+func resolveTraefikEntryPoint() string {
+	return os.Getenv("TRAEFIK_ENTRYPOINT")
+}
+
+func resolveTraefikCertResolver() string {
+	return os.Getenv("TRAEFIK_CERTRESOLVER")
 }
 
 const statusDashboardHTML = `<!DOCTYPE html>
@@ -263,7 +271,7 @@ const statusDashboardHTML = `<!DOCTYPE html>
 </body>
 </html>`
 
-func runStatusServer(ctx context.Context, srv *proxy.ProxyServer, port int, traefikProxyHost string) {
+func runStatusServer(ctx context.Context, srv *proxy.ProxyServer, port int, traefikProxyHost, traefikEntryPoint, traefikCertResolver string) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -278,7 +286,7 @@ func runStatusServer(ctx context.Context, srv *proxy.ProxyServer, port int, trae
 			snaps[i] = traefikpkg.Snapshot{ListenPort: s.ListenPort, TraefikHosts: s.TraefikHosts}
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(traefikpkg.BuildConfig(snaps, traefikProxyHost)) //nolint:errcheck
+		json.NewEncoder(w).Encode(traefikpkg.BuildConfig(snaps, traefikProxyHost, traefikEntryPoint, traefikCertResolver)) //nolint:errcheck
 	})
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -397,12 +405,15 @@ func main() {
 	// Start the HTTP status server
 	statusPort := resolveStatusPort()
 	traefikProxyHost := resolveTraefikProxyHost()
+	traefikEntryPoint := resolveTraefikEntryPoint()
+	traefikCertResolver := resolveTraefikCertResolver()
 	if statusPort == 0 {
 		log.Println("status server: disabled (STATUS_PORT=0)")
 	} else {
 		log.Printf("status server: listening on :%d (set STATUS_PORT=0 to disable)", statusPort)
-		log.Printf("traefik provider: GET /traefik available (TRAEFIK_PROXY_HOST=%s)", traefikProxyHost)
-		runStatusServer(ctx, srv, statusPort, traefikProxyHost)
+		log.Printf("traefik provider: GET /traefik available (TRAEFIK_PROXY_HOST=%s, TRAEFIK_ENTRYPOINT=%q, TRAEFIK_CERTRESOLVER=%q)",
+			traefikProxyHost, traefikEntryPoint, traefikCertResolver)
+		runStatusServer(ctx, srv, statusPort, traefikProxyHost, traefikEntryPoint, traefikCertResolver)
 	}
 
 	// Load dynamic config file
