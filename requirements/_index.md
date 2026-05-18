@@ -72,5 +72,6 @@
 | REQ-068 | Docker Stack Service Scaling                                             | High   | Completed   | 2026-05-15 | [2026-05-15-docker-stack-scaling.md](2026-05-15-docker-stack-scaling.md) |
 | REQ-069 | Traefik Integration (HTTP Provider Endpoint)                             | High   | Completed   | 2026-05-18 | [2026-05-18-traefik-integration.md](2026-05-18-traefik-integration.md) |
 | REQ-070 | Document TLS and API Key Options in README Files                         | Medium | Completed   | 2026-05-18 | [2026-05-18-document-tls-apikey.md](2026-05-18-document-tls-apikey.md) |
-| REQ-071 | Fix Go CI Build (Unkeyed PortMapping Struct Literals)                    | High   | Completed   | 2026-05-18 | [2026-05-18-fix-go-ci-build.md](2026-05-18-fix-go-ci-build.md) |
-| REQ-072 | Fix golangci-lint QF1008 Violations in docker/manager.go                 | High   | Completed   | 2026-05-18 | [2026-05-18-fix-go-ci-lint-qf1008.md](2026-05-18-fix-go-ci-lint-qf1008.md) |
+| REQ-071 | GitHub Actions Docker Hub Publish Workflow                               | High   | Completed   | 2026-05-18 | [2026-05-18-github-action-docker-publish.md](2026-05-18-github-action-docker-publish.md) |
+| REQ-072 | Fix Go CI Build (Unkeyed PortMapping Struct Literals)                    | High   | Completed   | 2026-05-18 | [2026-05-18-fix-go-ci-build.md](2026-05-18-fix-go-ci-build.md) |
+| REQ-073 | Fix golangci-lint QF1008 Violations in docker/manager.go                 | High   | Completed   | 2026-05-18 | [2026-05-18-fix-go-ci-lint-qf1008.md](2026-05-18-fix-go-ci-lint-qf1008.md) |
