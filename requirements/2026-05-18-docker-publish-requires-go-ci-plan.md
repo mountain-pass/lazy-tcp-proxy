@@ -2,7 +2,7 @@
 
 **Requirement**: [2026-05-18-docker-publish-requires-go-ci.md](2026-05-18-docker-publish-requires-go-ci.md)
 **Date**: 2026-05-18
-**Status**: Draft
+**Status**: Implemented
 
 ## Implementation Steps
 
