@@ -28,7 +28,8 @@ Add these labels to any container you want proxied/managed:
 | `lazy-tcp-proxy.cron-stop` | No | 5-field cron expression — stop the container/deployment on this schedule (see [Cron Scheduling](#cron-scheduling)) |
 | `lazy-tcp-proxy.http-healthcheck` | No | URL to poll after a cold start — proxy waits for a 2xx response before forwarding TCP traffic. Supports `{{container}}` placeholder (see [HTTP Health Check](#http-health-check)) |
 | `lazy-tcp-proxy.tls` | No | Set to `true` to wrap the listener with TLS using a shared self-signed certificate. Works with any TCP protocol, not only HTTP (see [TLS Termination](#tls-termination)) |
-| `lazy-tcp-proxy.api-key` | No | Require clients to send this value in the `X-API-Key` header on every HTTP request. Missing or incorrect key → `401 Unauthorized`. The header is stripped before forwarding (see [API Key Authentication](#api-key-authentication)) |
+| `lazy-tcp-proxy.api-key` | No | Comma-separated list of accepted values for the `X-API-Key` header. Any matching key is accepted. Missing or incorrect key → `401 Unauthorized`. The header is stripped before forwarding (see [API Key Authentication](#api-key-authentication)) |
+| `lazy-tcp-proxy.basic-auth` | No | Comma-separated list of `user:password` credentials. Any matching credential is accepted via `Authorization: Basic`. Missing or incorrect credentials → `401 Unauthorized` with `WWW-Authenticate`. The header is stripped before forwarding (see [Basic Auth Authentication](#basic-auth-authentication)) |
 | `lazy-tcp-proxy.traefik-hosts` | No | Comma-separated `<domain>:<listen_port>` pairs — exposes these mappings via `GET /traefik` for Traefik's HTTP provider (see [Traefik Integration](#traefik-integration)) |
 
 \* At least one of `lazy-tcp-proxy.ports` or `lazy-tcp-proxy.udp-ports` must be set. A container may use TCP only, UDP only, or both.
@@ -427,9 +428,9 @@ annotations:
 
 ## API Key Authentication
 
-Set `lazy-tcp-proxy.api-key` to require an `X-API-Key` header on every **HTTP** request forwarded to the container.
+Set `lazy-tcp-proxy.api-key` to require an `X-API-Key` header on every **HTTP** request forwarded to the container. Multiple keys can be supplied as a comma-separated list — any matching key is accepted (useful for key rotation).
 
-- If the header is missing or its value does not match the label exactly → the proxy responds with `HTTP/1.1 401 Unauthorized` and closes the connection.
+- If the header is missing or its value does not match any configured key → the proxy responds with `HTTP/1.1 401 Unauthorized` and closes the connection.
 - If the header matches → the proxy strips it before forwarding the request to the container (the upstream never sees `X-API-Key`).
 - HTTP/1.1 keep-alive is honoured: subsequent requests on the same connection are each checked independently.
 
@@ -438,6 +439,13 @@ labels:
   - "lazy-tcp-proxy.enabled=true"
   - "lazy-tcp-proxy.ports=9000:80"
   - "lazy-tcp-proxy.api-key=my-secret-key"
+```
+
+**Multiple keys (key rotation):**
+
+```yaml
+labels:
+  - "lazy-tcp-proxy.api-key=old-key,new-key"
 ```
 
 **Client example:**
@@ -475,6 +483,67 @@ annotations:
   lazy-tcp-proxy.enabled: "true"
   lazy-tcp-proxy.ports: "9000:80"
   lazy-tcp-proxy.api-key: "my-secret-key"
+```
+
+---
+
+## Basic Auth Authentication
+
+Set `lazy-tcp-proxy.basic-auth` to require HTTP Basic Auth credentials on every **HTTP** request. This allows clients to authenticate using credentials embedded in the URL (e.g. `https://nick:somepassword@myservice.com`), which the HTTP client automatically converts to an `Authorization: Basic <base64>` header.
+
+Multiple `user:password` pairs can be supplied as a comma-separated list — any matching credential is accepted (useful for per-user credentials or rotation).
+
+- If the header is missing or no credential matches → the proxy responds with `HTTP/1.1 401 Unauthorized` (including `WWW-Authenticate: Basic realm="lazy-tcp-proxy"`) and closes the connection.
+- If a credential matches → the proxy strips the `Authorization` header before forwarding the request to the container.
+
+```yaml
+labels:
+  - "lazy-tcp-proxy.enabled=true"
+  - "lazy-tcp-proxy.ports=9000:80"
+  - "lazy-tcp-proxy.basic-auth=nick:somepassword"
+```
+
+**Multiple credentials:**
+
+```yaml
+labels:
+  - "lazy-tcp-proxy.basic-auth=nick:somepassword,alice:otherpassword"
+```
+
+**Client examples:**
+
+```sh
+# Credentials in URL — forwarded automatically as Authorization: Basic header
+curl http://nick:somepassword@localhost:9000/
+
+# Explicit header
+curl -u nick:somepassword http://localhost:9000/
+
+# Missing credentials — 401 Unauthorized
+curl http://localhost:9000/
+```
+
+**Combined TLS + Basic Auth:**
+
+```yaml
+labels:
+  - "lazy-tcp-proxy.tls=true"
+  - "lazy-tcp-proxy.basic-auth=nick:somepassword"
+```
+
+```sh
+curl -k https://nick:somepassword@localhost:9443/
+```
+
+> **Note:** `lazy-tcp-proxy.basic-auth` is HTTP-specific — the same caveat applies as for `api-key`.
+
+**Kubernetes annotation:**
+
+```yaml
+annotations:
+  lazy-tcp-proxy.enabled: "true"
+  lazy-tcp-proxy.ports: "9000:80"
+  lazy-tcp-proxy.basic-auth: "nick:somepassword,alice:otherpassword"
 ```
 
 ---

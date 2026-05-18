@@ -2,7 +2,7 @@
 
 **Requirement**: [2026-05-18-basic-auth-and-multi-api-key.md](2026-05-18-basic-auth-and-multi-api-key.md)
 **Date**: 2026-05-18
-**Status**: Draft
+**Status**: Implemented
 
 ## Implementation Steps
 

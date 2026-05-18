@@ -233,7 +233,8 @@ func (m *Manager) containerToTargetInfo(ctx context.Context, containerID string)
 		inspect.State.Health.Status != "none"
 
 	https := strings.TrimSpace(inspect.Config.Labels["lazy-tcp-proxy.tls"]) == "true"
-	apiKey := strings.TrimSpace(inspect.Config.Labels["lazy-tcp-proxy.api-key"])
+	apiKey := types.ParseAuthList("lazy-tcp-proxy.api-key", inspect.Config.Labels["lazy-tcp-proxy.api-key"])
+	basicAuth := types.ParseAuthList("lazy-tcp-proxy.basic-auth", inspect.Config.Labels["lazy-tcp-proxy.basic-auth"])
 
 	var traefikHosts []string
 	if v := strings.TrimSpace(inspect.Config.Labels["lazy-tcp-proxy.traefik-hosts"]); v != "" {
@@ -259,6 +260,7 @@ func (m *Manager) containerToTargetInfo(ctx context.Context, containerID string)
 		HasHealthCheck:  hasHealthCheck,
 		TLS:             https,
 		APIKey:          apiKey,
+		BasicAuth:       basicAuth,
 		TraefikHosts:    traefikHosts,
 	}, nil
 }

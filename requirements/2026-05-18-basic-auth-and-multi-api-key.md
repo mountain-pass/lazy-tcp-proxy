@@ -2,7 +2,7 @@
 
 **Date Added**: 2026-05-18
 **Priority**: High
-**Status**: In Progress
+**Status**: Completed
 
 ## Problem Statement
 
@@ -78,17 +78,17 @@ annotations:
 
 ## Acceptance Criteria
 
-- [ ] `basic_auth: ["nick:somepassword"]` in YAML causes the proxy to require valid Basic Auth credentials.
-- [ ] A request without `Authorization` header returns `401 Unauthorized`.
-- [ ] A request with wrong credentials returns `401 Unauthorized`.
-- [ ] A request with any of the listed credentials is forwarded (header stripped).
-- [ ] `lazy-tcp-proxy.basic-auth=nick:pass` Docker label behaves identically to the YAML setting.
-- [ ] `api_key: ["key1", "key2"]` YAML accepts requests with either key.
-- [ ] `lazy-tcp-proxy.api-key=key1,key2` Docker label accepts requests with either key.
-- [ ] `targetInfoEqual` returns false when `APIKey` lists differ.
-- [ ] `targetInfoEqual` returns false when `BasicAuth` lists differ.
-- [ ] Existing services with neither `api_key` nor `basic_auth` are unaffected (pure TCP passthrough).
-- [ ] Tests cover: missing auth, wrong auth, correct auth, multiple entries (any-match).
+- [x] `basic_auth: ["nick:somepassword"]` in YAML causes the proxy to require valid Basic Auth credentials.
+- [x] A request without `Authorization` header returns `401 Unauthorized`.
+- [x] A request with wrong credentials returns `401 Unauthorized`.
+- [x] A request with any of the listed credentials is forwarded (header stripped).
+- [x] `lazy-tcp-proxy.basic-auth=nick:pass` Docker label behaves identically to the YAML setting.
+- [x] `api_key: ["key1", "key2"]` YAML accepts requests with either key.
+- [x] `lazy-tcp-proxy.api-key=key1,key2` Docker label accepts requests with either key.
+- [x] `targetInfoEqual` returns false when `APIKey` lists differ.
+- [x] `targetInfoEqual` returns false when `BasicAuth` lists differ.
+- [x] Existing services with neither `api_key` nor `basic_auth` are unaffected (pure TCP passthrough).
+- [x] Tests cover: missing auth, wrong auth, correct auth, multiple entries (any-match).
 
 ## Dependencies
 

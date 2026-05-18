@@ -57,7 +57,10 @@ services:
 #    cron_stop:  "0 17 * * 1-5"
 #    http_healthcheck: "http://{{container}}:8080/health"
 #    tls: true
-#    api_key: "your-secret-key"
+#    api_key:
+#      - "your-secret-key"
+#    basic_auth:
+#      - "user:password"
 #    traefik_hosts:
 #      - "myapp.localhost:9000"
 ```
@@ -109,7 +112,10 @@ services:
     cron_stop:  "0 17 * * 1-5"   # stop  Mon–Fri at 17:00
     http_healthcheck: "http://{{container}}:8080/health"
     tls: true                     # wrap listener with TLS (shared self-signed cert)
-    api_key: "your-secret-key"    # require X-API-Key header on every HTTP request
+    api_key:                      # require X-API-Key header matching any listed value
+      - "your-secret-key"
+    basic_auth:                   # require Authorization: Basic matching any listed user:password
+      - "nick:somepassword"
     traefik_hosts:
       - "myapp.localhost:9000"    # domain:listen_port pairs for Traefik HTTP provider
 ```
