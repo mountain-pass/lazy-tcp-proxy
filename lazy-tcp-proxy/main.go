@@ -156,6 +156,13 @@ const statusDashboardHTML = `<!DOCTYPE html>
       font-size: 0.78rem; background: #263044; border: 1px solid #374151;
       border-radius: 4px; padding: 2px 8px; color: #94a3b8;
     }
+    .traefik-hosts { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+    .traefik-host {
+      font-size: 0.78rem; background: #1e1a3a; border: 1px solid #4c3f8a;
+      border-radius: 4px; padding: 2px 8px; color: #a78bfa; text-decoration: none;
+    }
+    .traefik-host:hover { background: #2d2560; color: #c4b5fd; }
+    .traefik-label { font-size: 0.68rem; color: #475569; text-transform: uppercase; letter-spacing: 0.05em; }
     .active-conns { color: #60a5fa; font-weight: 600; }
     .empty { color: #475569; font-style: italic; }
   </style>
@@ -209,6 +216,21 @@ const statusDashboardHTML = `<!DOCTYPE html>
           return '<a class="port-entry" target="_blank" href="' + window.location.protocol + '//' + window.location.hostname + ':' + p.listen_port + '">:' + p.listen_port + ' (' + p.active_conns + ')' + '</a>';
         }).join('');
 
+        // Collect unique traefik host entries from all ports (format: "domain:listenPort")
+        const traefikDomains = [];
+        const seen = new Set();
+        for (const p of group.ports) {
+          for (const h of (p.traefik_hosts || [])) {
+            const domain = h.substring(0, h.lastIndexOf(':')) || h;
+            if (!seen.has(domain)) { seen.add(domain); traefikDomains.push(domain); }
+          }
+        }
+        const traefikSection = traefikDomains.length
+          ? '<div><div class="traefik-label">Traefik</div><div class="traefik-hosts">' +
+              traefikDomains.map(d => '<a class="traefik-host" target="_blank" href="http://' + esc(d) + '">' + esc(d) + '</a>').join('') +
+            '</div></div>'
+          : '';
+
         html +=
           '<div class="container-card">' +
             '<div class="container-header">' +
@@ -216,6 +238,7 @@ const statusDashboardHTML = `<!DOCTYPE html>
                 '<span class="status-badge status-' + best + '">' + best + '</span>' +
             '</div>' +
             '<div class="ports">' + portBadges + '</div>' +
+            traefikSection +
           '</div>';
       }
       el.innerHTML = html;
