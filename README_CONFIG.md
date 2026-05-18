@@ -23,8 +23,8 @@ Configuration is stored in a YAML file on disk. Changes are applied by calling
 | `ADMIN_PORT` | `0` | Port for the admin API server. Set to `0` to disable (default) |
 | `ADMIN_API_KEY` | *(required if `ADMIN_PORT` > 0)* | API key for authenticating admin API requests |
 | `TRAEFIK_PROXY_HOST` | `lazy-tcp-proxy` | Hostname/IP Traefik uses to reach lazy-tcp-proxy's listen ports (see [Traefik Integration](README_LABELS.md#traefik-integration)) |
-| `TRAEFIK_ENTRYPOINT` | *(unset)* | When set, adds `"entryPoints": ["<value>"]` to every generated Traefik HTTP router |
-| `TRAEFIK_CERTRESOLVER` | *(unset)* | When set, adds `"tls": {"certResolver": "<value>"}` to every generated Traefik HTTP router |
+| `TRAEFIK_ENTRYPOINT` | `websecure` | Traefik entry point name added to every generated router's `entryPoints`; set to `""` to omit |
+| `TRAEFIK_CERTRESOLVER` | `myresolver` | Cert resolver name added to every generated router's `tls.certResolver`; set to `""` to omit |
 
 If `ADMIN_PORT` is non-zero and `ADMIN_API_KEY` is not set, the proxy will refuse to start.
 
