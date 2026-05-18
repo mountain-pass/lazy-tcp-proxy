@@ -28,6 +28,8 @@ type Manager struct {
 	mu            sync.Mutex
 	joinedNets    map[string]string // networkID → name
 	swarmServices map[string]int    // serviceID → desiredReplicas
+	configOnlyMu  sync.RWMutex
+	configOnlyIDs map[string]string // container name → registered ContainerID (config-only targets)
 }
 
 // NewManager creates a new Manager. The Docker socket path can be set via
@@ -43,7 +45,7 @@ func NewManager() (*Manager, error) {
 		return nil, fmt.Errorf("creating docker client: %w", err)
 	}
 
-	m := &Manager{cli: cli, joinedNets: make(map[string]string), swarmServices: make(map[string]int)}
+	m := &Manager{cli: cli, joinedNets: make(map[string]string), swarmServices: make(map[string]int), configOnlyIDs: make(map[string]string)}
 	m.selfID = m.SelfContainerID()
 	if m.selfID != "" {
 		log.Printf("docker: detected self container ID: %s", m.selfID)
@@ -372,6 +374,32 @@ func (m *Manager) Shutdown(ctx context.Context) {
 // DefaultTargetID returns name as-is. The Docker API accepts container names
 // wherever container IDs are expected, so no lookup is required.
 func (m *Manager) DefaultTargetID(name string) string { return name }
+
+// InspectRunning reports whether the container identified by targetID is running.
+func (m *Manager) InspectRunning(ctx context.Context, targetID string) (bool, error) {
+	result, err := m.cli.ContainerInspect(ctx, targetID, client.ContainerInspectOptions{})
+	if err != nil {
+		return false, fmt.Errorf("inspecting container: %w", err)
+	}
+	return result.Container.State.Running, nil
+}
+
+// SetConfigOnlyNames stores the name→registeredContainerID mapping for
+// containers managed via config.yaml only (no lazy-tcp-proxy.enabled label).
+// WatchEvents uses this map to route start/stop events for those containers.
+func (m *Manager) SetConfigOnlyNames(nameToID map[string]string) {
+	m.configOnlyMu.Lock()
+	m.configOnlyIDs = nameToID
+	m.configOnlyMu.Unlock()
+}
+
+// getConfigOnlyID returns the registered ContainerID for a config-only
+// container by name, or "" if not found.
+func (m *Manager) getConfigOnlyID(name string) string {
+	m.configOnlyMu.RLock()
+	defer m.configOnlyMu.RUnlock()
+	return m.configOnlyIDs[name]
+}
 
 // warnSharedDefaultNetworks logs a warning if any of the container's networks is a
 // Docker Compose default network that the proxy is already a member of. This situation
@@ -963,7 +991,14 @@ func (m *Manager) WatchEvents(ctx context.Context, handler types.TargetHandler) 
 					name := msg.Actor.Attributes["name"]
 					attrs := msg.Actor.Attributes
 					if attrs["lazy-tcp-proxy.enabled"] != "true" {
-						log.Printf("docker: event: container %s started but not proxied: missing label lazy-tcp-proxy.enabled=true", name)
+						if rid := m.getConfigOnlyID(name); rid != "" {
+							if msg.Action == "start" {
+								log.Printf("docker: event: config-only container started: \033[33m%s\033[0m", name)
+								handler.ContainerStarted(rid)
+							}
+						} else {
+							log.Printf("docker: event: container %s started but not proxied: missing label lazy-tcp-proxy.enabled=true", name)
+						}
 						continue
 					}
 					portsVal, hasPorts := attrs["lazy-tcp-proxy.ports"]
@@ -1011,13 +1046,25 @@ func (m *Manager) WatchEvents(ctx context.Context, handler types.TargetHandler) 
 
 				case "die":
 					name := msg.Actor.Attributes["name"]
-					log.Printf("docker: event: container stopped: \033[33m%s\033[0m (still registered)", name)
-					handler.ContainerStopped(msg.Actor.ID)
+					targetID := msg.Actor.ID
+					if rid := m.getConfigOnlyID(name); rid != "" {
+						targetID = rid
+						log.Printf("docker: event: config-only container stopped: \033[33m%s\033[0m (still registered)", name)
+					} else {
+						log.Printf("docker: event: container stopped: \033[33m%s\033[0m (still registered)", name)
+					}
+					handler.ContainerStopped(targetID)
 
 				case "destroy":
 					name := msg.Actor.Attributes["name"]
-					log.Printf("docker: event: container removed: \033[33m%s\033[0m", name)
-					handler.RemoveTarget(msg.Actor.ID)
+					targetID := msg.Actor.ID
+					if rid := m.getConfigOnlyID(name); rid != "" {
+						targetID = rid
+						log.Printf("docker: event: config-only container removed: \033[33m%s\033[0m", name)
+					} else {
+						log.Printf("docker: event: container removed: \033[33m%s\033[0m", name)
+					}
+					handler.RemoveTarget(targetID)
 				}
 			}
 		}

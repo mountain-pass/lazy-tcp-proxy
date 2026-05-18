@@ -2,7 +2,7 @@
 
 **Requirement**: [2026-05-18-fix-managed-services-display.md](2026-05-18-fix-managed-services-display.md)
 **Date**: 2026-05-18
-**Status**: Approved
+**Status**: Implemented
 
 ## Root Cause Summary
 

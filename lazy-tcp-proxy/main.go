@@ -342,6 +342,16 @@ type backendManager interface {
 	// Docker networks. Used to connect the proxy to networks for config-only
 	// targets that are not discovered via Docker labels. No-op on Kubernetes.
 	JoinNetworksForContainerNames(ctx context.Context, names []string)
+	// InspectRunning reports whether the container/service identified by targetID
+	// is currently running. Used to populate the Running field for YAML-only
+	// targets that were not discovered via backend labels. Returns (false, nil)
+	// on backends where this is not applicable (e.g. Kubernetes).
+	InspectRunning(ctx context.Context, targetID string) (bool, error)
+	// SetConfigOnlyNames registers the name→registeredContainerID mapping for
+	// containers that are managed via config.yaml only (no backend label).
+	// The Docker backend uses this so WatchEvents can route start/stop events
+	// for unlabelled containers. No-op on Kubernetes.
+	SetConfigOnlyNames(nameToID map[string]string)
 }
 
 // discoverAndApply runs backend discovery, applies the YAML config overlay,
@@ -354,10 +364,35 @@ func discoverAndApply(ctx context.Context, mgr backendManager, store *config.Sto
 	if err := mgr.DiscoverServices(ctx, collector); err != nil {
 		log.Printf("discover services warning: %v", err)
 	}
-	merged, errs := store.Apply(collector.Targets(), mgr.DefaultTargetID)
+
+	discovered := collector.Targets()
+	merged, errs := store.Apply(discovered, mgr.DefaultTargetID)
 	for _, e := range errs {
 		log.Printf("config apply warning: %v", e)
 	}
+
+	// Build set of ContainerIDs that came from label discovery.
+	discoveredIDSet := make(map[string]bool, len(discovered))
+	for _, t := range discovered {
+		discoveredIDSet[t.ContainerID] = true
+	}
+
+	// For YAML-only entries (not in the discovered set), inspect the actual
+	// container running state and build the name→ID map for event routing.
+	configOnlyNameToID := make(map[string]string)
+	for i, t := range merged {
+		if !discoveredIDSet[t.ContainerID] {
+			running, err := mgr.InspectRunning(ctx, t.ContainerID)
+			if err != nil {
+				log.Printf("config: could not inspect running state for %q: %v", t.ContainerName, err)
+			} else {
+				merged[i].Running = running
+			}
+			configOnlyNameToID[t.ContainerName] = t.ContainerID
+		}
+	}
+	mgr.SetConfigOnlyNames(configOnlyNameToID)
+
 	mgr.NotifyTargets(merged)
 
 	var configOnlyNames []string
