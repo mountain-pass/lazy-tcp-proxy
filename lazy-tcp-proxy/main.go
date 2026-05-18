@@ -80,7 +80,7 @@ func resolveStatusPort() int {
 	return n // 0 means disabled
 }
 
-const defaultAdminPort = 8081
+const defaultAdminPort = 0
 const defaultConfigPath = "/etc/lazy-tcp-proxy/config.yaml"
 
 func resolveAdminPort() int {
@@ -108,6 +108,14 @@ func resolveTraefikProxyHost() string {
 		return v
 	}
 	return "lazy-tcp-proxy"
+}
+
+func resolveTraefikEntryPoint() string {
+	return os.Getenv("TRAEFIK_ENTRYPOINT")
+}
+
+func resolveTraefikCertResolver() string {
+	return os.Getenv("TRAEFIK_CERTRESOLVER")
 }
 
 const statusDashboardHTML = `<!DOCTYPE html>
@@ -156,6 +164,13 @@ const statusDashboardHTML = `<!DOCTYPE html>
       font-size: 0.78rem; background: #263044; border: 1px solid #374151;
       border-radius: 4px; padding: 2px 8px; color: #94a3b8;
     }
+    .traefik-hosts { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+    .traefik-host {
+      font-size: 0.78rem; background: #1e1a3a; border: 1px solid #4c3f8a;
+      border-radius: 4px; padding: 2px 8px; color: #a78bfa; text-decoration: none;
+    }
+    .traefik-host:hover { background: #2d2560; color: #c4b5fd; }
+    .traefik-label { font-size: 0.68rem; color: #475569; text-transform: uppercase; letter-spacing: 0.05em; }
     .active-conns { color: #60a5fa; font-weight: 600; }
     .empty { color: #475569; font-style: italic; }
   </style>
@@ -209,6 +224,21 @@ const statusDashboardHTML = `<!DOCTYPE html>
           return '<a class="port-entry" target="_blank" href="' + window.location.protocol + '//' + window.location.hostname + ':' + p.listen_port + '">:' + p.listen_port + ' (' + p.active_conns + ')' + '</a>';
         }).join('');
 
+        // Collect unique traefik host entries from all ports (format: "domain:listenPort")
+        const traefikDomains = [];
+        const seen = new Set();
+        for (const p of group.ports) {
+          for (const h of (p.traefik_hosts || [])) {
+            const domain = h.substring(0, h.lastIndexOf(':')) || h;
+            if (!seen.has(domain)) { seen.add(domain); traefikDomains.push(domain); }
+          }
+        }
+        const traefikSection = traefikDomains.length
+          ? '<div><div class="traefik-label">Traefik</div><div class="traefik-hosts">' +
+              traefikDomains.map(d => '<a class="traefik-host" target="_blank" href="http://' + esc(d) + '">' + esc(d) + '</a>').join('') +
+            '</div></div>'
+          : '';
+
         html +=
           '<div class="container-card">' +
             '<div class="container-header">' +
@@ -216,6 +246,7 @@ const statusDashboardHTML = `<!DOCTYPE html>
                 '<span class="status-badge status-' + best + '">' + best + '</span>' +
             '</div>' +
             '<div class="ports">' + portBadges + '</div>' +
+            traefikSection +
           '</div>';
       }
       el.innerHTML = html;
@@ -240,7 +271,7 @@ const statusDashboardHTML = `<!DOCTYPE html>
 </body>
 </html>`
 
-func runStatusServer(ctx context.Context, srv *proxy.ProxyServer, port int, traefikProxyHost string) {
+func runStatusServer(ctx context.Context, srv *proxy.ProxyServer, port int, traefikProxyHost, traefikEntryPoint, traefikCertResolver string) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -255,7 +286,7 @@ func runStatusServer(ctx context.Context, srv *proxy.ProxyServer, port int, trae
 			snaps[i] = traefikpkg.Snapshot{ListenPort: s.ListenPort, TraefikHosts: s.TraefikHosts}
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(traefikpkg.BuildConfig(snaps, traefikProxyHost)) //nolint:errcheck
+		json.NewEncoder(w).Encode(traefikpkg.BuildConfig(snaps, traefikProxyHost, traefikEntryPoint, traefikCertResolver)) //nolint:errcheck
 	})
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -374,12 +405,15 @@ func main() {
 	// Start the HTTP status server
 	statusPort := resolveStatusPort()
 	traefikProxyHost := resolveTraefikProxyHost()
+	traefikEntryPoint := resolveTraefikEntryPoint()
+	traefikCertResolver := resolveTraefikCertResolver()
 	if statusPort == 0 {
 		log.Println("status server: disabled (STATUS_PORT=0)")
 	} else {
 		log.Printf("status server: listening on :%d (set STATUS_PORT=0 to disable)", statusPort)
-		log.Printf("traefik provider: GET /traefik available (TRAEFIK_PROXY_HOST=%s)", traefikProxyHost)
-		runStatusServer(ctx, srv, statusPort, traefikProxyHost)
+		log.Printf("traefik provider: GET /traefik available (TRAEFIK_PROXY_HOST=%s, TRAEFIK_ENTRYPOINT=%q, TRAEFIK_CERTRESOLVER=%q)",
+			traefikProxyHost, traefikEntryPoint, traefikCertResolver)
+		runStatusServer(ctx, srv, statusPort, traefikProxyHost, traefikEntryPoint, traefikCertResolver)
 	}
 
 	// Load dynamic config file
