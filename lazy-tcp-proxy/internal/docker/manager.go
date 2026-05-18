@@ -994,6 +994,22 @@ func (m *Manager) WatchEvents(ctx context.Context, handler types.TargetHandler) 
 						if rid := m.getConfigOnlyID(name); rid != "" {
 							if msg.Action == "start" {
 								log.Printf("docker: event: config-only container started: \033[33m%s\033[0m", name)
+								result, err := m.cli.ContainerInspect(ctx, msg.Actor.ID, client.ContainerInspectOptions{})
+								if err == nil {
+									var networkIDs []string
+									for _, ep := range result.Container.NetworkSettings.Networks {
+										if ep.NetworkID != "" {
+											networkIDs = append(networkIDs, ep.NetworkID)
+										}
+									}
+									joined, joinErr := m.JoinNetworks(ctx, networkIDs)
+									if joinErr != nil {
+										log.Printf("docker: event: failed to join networks for config-only \033[33m%s\033[0m: %v", name, joinErr)
+									}
+									for _, n := range joined {
+										log.Printf("docker: event: joined network: \033[32m%s\033[0m", n)
+									}
+								}
 								handler.ContainerStarted(rid)
 							}
 						} else {
@@ -1057,14 +1073,16 @@ func (m *Manager) WatchEvents(ctx context.Context, handler types.TargetHandler) 
 
 				case "destroy":
 					name := msg.Actor.Attributes["name"]
-					targetID := msg.Actor.ID
 					if rid := m.getConfigOnlyID(name); rid != "" {
-						targetID = rid
-						log.Printf("docker: event: config-only container removed: \033[33m%s\033[0m", name)
+						// Config-only targets are defined in config.yaml, not by Docker
+						// labels. Keep listeners alive so the target recovers automatically
+						// when the container is recreated (e.g. docker compose up).
+						log.Printf("docker: event: config-only container removed: \033[33m%s\033[0m (kept registered, waiting for restart)", name)
+						handler.ContainerStopped(rid)
 					} else {
 						log.Printf("docker: event: container removed: \033[33m%s\033[0m", name)
+						handler.RemoveTarget(msg.Actor.ID)
 					}
-					handler.RemoveTarget(targetID)
 				}
 			}
 		}

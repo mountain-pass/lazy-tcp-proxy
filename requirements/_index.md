@@ -81,4 +81,4 @@
 | REQ-077 | Auto-Join Docker Networks for Static Config Targets                      | High   | Completed     | 2026-05-18 | [2026-05-18-join-networks-for-config-targets.md](2026-05-18-join-networks-for-config-targets.md) |
 | REQ-078 | Basic Auth Support and Multi-Value API Key                               | High   | Completed     | 2026-05-18 | [2026-05-18-basic-auth-and-multi-api-key.md](2026-05-18-basic-auth-and-multi-api-key.md) |
 | REQ-079 | Fix: Config-Only Services Always Show as Stopped                         | High   | Completed     | 2026-05-18 | [2026-05-18-fix-managed-services-display.md](2026-05-18-fix-managed-services-display.md) |
-| REQ-080 | Fix: Config-Only Container Disappears After docker compose up            | High   | In Progress   | 2026-05-18 | [2026-05-18-fix-config-only-recreate.md](2026-05-18-fix-config-only-recreate.md) |
+| REQ-080 | Fix: Config-Only Container Disappears After docker compose up            | High   | Completed     | 2026-05-18 | [2026-05-18-fix-config-only-recreate.md](2026-05-18-fix-config-only-recreate.md) |

@@ -2,7 +2,7 @@
 
 **Requirement**: [2026-05-18-fix-config-only-recreate.md](2026-05-18-fix-config-only-recreate.md)
 **Date**: 2026-05-18
-**Status**: Approved
+**Status**: Implemented
 
 ## Implementation Steps
 
