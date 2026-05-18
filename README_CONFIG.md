@@ -53,6 +53,8 @@ services:
 #    cron_start: "0 9 * * 1-5"
 #    cron_stop:  "0 17 * * 1-5"
 #    http_healthcheck: "http://{{container}}:8080/health"
+#    tls: true
+#    api_key: "your-secret-key"
 ```
 
 ### Docker Compose setup
@@ -101,6 +103,8 @@ services:
     cron_start: "0 9 * * 1-5"    # start Mon–Fri at 09:00
     cron_stop:  "0 17 * * 1-5"   # stop  Mon–Fri at 17:00
     http_healthcheck: "http://{{container}}:8080/health"
+    tls: true                     # wrap listener with TLS (shared self-signed cert)
+    api_key: "your-secret-key"    # require X-API-Key header on every HTTP request
 ```
 
 See [README_LABELS.md](README_LABELS.md) for full descriptions of each field — the YAML fields

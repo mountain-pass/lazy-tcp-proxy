@@ -27,6 +27,8 @@ Add these labels to any container you want proxied/managed:
 | `lazy-tcp-proxy.cron-start` | No | 5-field cron expression — start the container/deployment on this schedule (see [Cron Scheduling](#cron-scheduling)) |
 | `lazy-tcp-proxy.cron-stop` | No | 5-field cron expression — stop the container/deployment on this schedule (see [Cron Scheduling](#cron-scheduling)) |
 | `lazy-tcp-proxy.http-healthcheck` | No | URL to poll after a cold start — proxy waits for a 2xx response before forwarding TCP traffic. Supports `{{container}}` placeholder (see [HTTP Health Check](#http-health-check)) |
+| `lazy-tcp-proxy.tls` | No | Set to `true` to wrap the listener with TLS using a shared self-signed certificate. Works with any TCP protocol, not only HTTP (see [TLS Termination](#tls-termination)) |
+| `lazy-tcp-proxy.api-key` | No | Require clients to send this value in the `X-API-Key` header on every HTTP request. Missing or incorrect key → `401 Unauthorized`. The header is stripped before forwarding (see [API Key Authentication](#api-key-authentication)) |
 
 \* At least one of `lazy-tcp-proxy.ports` or `lazy-tcp-proxy.udp-ports` must be set. A container may use TCP only, UDP only, or both.
 
@@ -387,3 +389,89 @@ services:
 - Values are the `ContainerName` / Deployment name of each managed dependant.
 - If a dependant is already running/stopped, the cascade is a no-op.
 - Works with both the Docker and Kubernetes images (use Deployment annotations instead of labels in k8s mode).
+
+---
+
+## TLS Termination
+
+Set `lazy-tcp-proxy.tls=true` to wrap the container's listener with TLS. The proxy generates a **shared self-signed ECDSA (P-256) certificate** at startup (valid for 10 years) and uses it for every TLS-enabled container.
+
+Because TLS is applied at the TCP listener level (via `tls.NewListener`), it works with **any TCP protocol** — HTTP, MySQL, Redis, MQTT, custom protocols, etc. — not only HTTP.
+
+```yaml
+labels:
+  - "lazy-tcp-proxy.enabled=true"
+  - "lazy-tcp-proxy.ports=9443:8080"
+  - "lazy-tcp-proxy.tls=true"
+```
+
+Clients must connect with TLS (e.g. `https://host:9443`) and accept the self-signed certificate. Most HTTP clients can be told to skip certificate verification:
+
+```sh
+curl -k https://localhost:9443/
+```
+
+> **Note:** The self-signed certificate is regenerated on every proxy restart. It has no Subject Alternative Names (SANs) and no configured minimum TLS version — suitable for development and internal use. For production, consider terminating TLS at a reverse proxy (e.g. Traefik, nginx) instead.
+
+**Kubernetes annotation:**
+
+```yaml
+annotations:
+  lazy-tcp-proxy.enabled: "true"
+  lazy-tcp-proxy.ports: "9443:8080"
+  lazy-tcp-proxy.tls: "true"
+```
+
+---
+
+## API Key Authentication
+
+Set `lazy-tcp-proxy.api-key` to require an `X-API-Key` header on every **HTTP** request forwarded to the container.
+
+- If the header is missing or its value does not match the label exactly → the proxy responds with `HTTP/1.1 401 Unauthorized` and closes the connection.
+- If the header matches → the proxy strips it before forwarding the request to the container (the upstream never sees `X-API-Key`).
+- HTTP/1.1 keep-alive is honoured: subsequent requests on the same connection are each checked independently.
+
+```yaml
+labels:
+  - "lazy-tcp-proxy.enabled=true"
+  - "lazy-tcp-proxy.ports=9000:80"
+  - "lazy-tcp-proxy.api-key=my-secret-key"
+```
+
+**Client example:**
+
+```sh
+# Correct key — request is forwarded
+curl -H "X-API-Key: my-secret-key" http://localhost:9000/
+
+# Missing key — 401 Unauthorized
+curl http://localhost:9000/
+```
+
+**Combined TLS + API Key:**
+
+Both labels can be set together to get encrypted and authenticated access:
+
+```yaml
+labels:
+  - "lazy-tcp-proxy.enabled=true"
+  - "lazy-tcp-proxy.ports=9443:8080"
+  - "lazy-tcp-proxy.tls=true"
+  - "lazy-tcp-proxy.api-key=my-secret-key"
+```
+
+```sh
+curl -k -H "X-API-Key: my-secret-key" https://localhost:9443/
+```
+
+> **Note:** `lazy-tcp-proxy.api-key` is HTTP-specific. If you enable it on a port serving a non-HTTP protocol (MySQL, Redis, etc.), the first bytes from the client will not parse as an HTTP request and the connection will be closed immediately.
+
+**Kubernetes annotation:**
+
+```yaml
+annotations:
+  lazy-tcp-proxy.enabled: "true"
+  lazy-tcp-proxy.ports: "9000:80"
+  lazy-tcp-proxy.api-key: "my-secret-key"
+```
