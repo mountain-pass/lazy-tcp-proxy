@@ -80,3 +80,4 @@
 | REQ-076 | Traefik Default Environment Variable Values                              | Low    | Completed     | 2026-05-18 | [2026-05-18-traefik-default-env-vars.md](2026-05-18-traefik-default-env-vars.md) |
 | REQ-077 | Auto-Join Docker Networks for Static Config Targets                      | High   | Completed     | 2026-05-18 | [2026-05-18-join-networks-for-config-targets.md](2026-05-18-join-networks-for-config-targets.md) |
 | REQ-078 | Basic Auth Support and Multi-Value API Key                               | High   | Completed     | 2026-05-18 | [2026-05-18-basic-auth-and-multi-api-key.md](2026-05-18-basic-auth-and-multi-api-key.md) |
+| REQ-079 | Fix: Config-Only Services Always Show as Stopped                         | High   | Planned       | 2026-05-18 | [2026-05-18-fix-managed-services-display.md](2026-05-18-fix-managed-services-display.md) |
