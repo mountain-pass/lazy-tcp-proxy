@@ -75,4 +75,4 @@
 | REQ-071 | GitHub Actions Docker Hub Publish Workflow                               | High   | Completed   | 2026-05-18 | [2026-05-18-github-action-docker-publish.md](2026-05-18-github-action-docker-publish.md) |
 | REQ-072 | Fix Go CI Build (Unkeyed PortMapping Struct Literals)                    | High   | Completed   | 2026-05-18 | [2026-05-18-fix-go-ci-build.md](2026-05-18-fix-go-ci-build.md) |
 | REQ-073 | Fix golangci-lint QF1008 Violations in docker/manager.go                 | High   | Completed   | 2026-05-18 | [2026-05-18-fix-go-ci-lint-qf1008.md](2026-05-18-fix-go-ci-lint-qf1008.md) |
-| REQ-074 | Fix CVE: Upgrade go.opentelemetry.io/otel to 1.41.0                     | High   | Planned     | 2026-05-18 | [2026-05-18-fix-otel-cve-1.41.0.md](2026-05-18-fix-otel-cve-1.41.0.md) |
+| REQ-074 | Fix CVE: Upgrade go.opentelemetry.io/otel to 1.41.0                     | High   | In Progress | 2026-05-18 | [2026-05-18-fix-otel-cve-1.41.0.md](2026-05-18-fix-otel-cve-1.41.0.md) |
