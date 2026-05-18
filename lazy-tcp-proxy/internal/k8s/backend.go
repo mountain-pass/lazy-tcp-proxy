@@ -245,6 +245,17 @@ func (b *Backend) NotifyTargets(_ []types.TargetInfo) {}
 // JoinNetworksForContainerNames is a no-op for the k8s backend (no Docker networks).
 func (b *Backend) JoinNetworksForContainerNames(_ context.Context, _ []string) {}
 
+// InspectRunning is a no-op for the k8s backend. Kubernetes running state is
+// already populated via label discovery in Discover().
+func (b *Backend) InspectRunning(_ context.Context, _ string) (bool, error) {
+	return false, nil
+}
+
+// SetConfigOnlyNames is a no-op for the k8s backend. Kubernetes events are
+// filtered at the API level by label selector; config-only event routing is
+// not required.
+func (b *Backend) SetConfigOnlyNames(_ map[string]string) {}
+
 // DefaultTargetID returns "namespace/name" for use as a ContainerID when a
 // YAML config entry has no matching discovered Deployment.
 func (b *Backend) DefaultTargetID(name string) string {

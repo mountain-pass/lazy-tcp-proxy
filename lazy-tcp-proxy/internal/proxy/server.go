@@ -617,17 +617,23 @@ func (s *ProxyServer) ContainerStopped(containerID string) {
 	}
 }
 
-// ContainerStarted cascades a start to any declared dependants.
+// ContainerStarted marks all port mappings for the container as running and
+// cascades a start to any declared dependants.
 func (s *ProxyServer) ContainerStarted(containerID string) {
-	s.mu.RLock()
+	s.mu.Lock()
 	var info types.TargetInfo
 	for _, ts := range s.targets {
 		if ts.info.ContainerID == containerID {
+			ts.running = true
 			info = ts.info
-			break
 		}
 	}
-	s.mu.RUnlock()
+	for _, uls := range s.udpTargets {
+		if uls.info.ContainerID == containerID {
+			uls.running = true
+		}
+	}
+	s.mu.Unlock()
 	if len(info.Dependants) > 0 {
 		go s.cascadeStart(info)
 	}
@@ -882,6 +888,18 @@ func (s *ProxyServer) handleConn(conn net.Conn, ts *targetState) {
 		log.Printf("proxy: could not start container \033[33m%s\033[0m: %v", ts.info.ContainerName, startErr)
 		return
 	}
+	s.mu.Lock()
+	for _, t := range s.targets {
+		if t.info.ContainerID == ts.info.ContainerID {
+			t.running = true
+		}
+	}
+	for _, u := range s.udpTargets {
+		if u.info.ContainerID == ts.info.ContainerID {
+			u.running = true
+		}
+	}
+	s.mu.Unlock()
 	if ts.info.WebhookURL != "" {
 		go s.fireWebhook(ts.info.WebhookURL, "container_started", ts.info.ContainerID, ts.info.ContainerName, "", "", 0)
 	}
