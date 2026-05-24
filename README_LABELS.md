@@ -31,6 +31,7 @@ Add these labels to any container you want proxied/managed:
 | `lazy-tcp-proxy.api-key` | No | Comma-separated list of accepted values for the `X-API-Key` header. Any matching key is accepted. Missing or incorrect key → `401 Unauthorized`. The header is stripped before forwarding (see [API Key Authentication](#api-key-authentication)) |
 | `lazy-tcp-proxy.basic-auth` | No | Comma-separated list of `user:password` credentials. Any matching credential is accepted via `Authorization: Basic`. Missing or incorrect credentials → `401 Unauthorized` with `WWW-Authenticate`. The header is stripped before forwarding (see [Basic Auth Authentication](#basic-auth-authentication)) |
 | `lazy-tcp-proxy.traefik-hosts` | No | Comma-separated `<domain>:<listen_port>` pairs — exposes these mappings via `GET /traefik` for Traefik's HTTP provider (see [Traefik Integration](#traefik-integration)) |
+| `lazy-tcp-proxy.traefik-tcp-hosts` | No | Comma-separated `<domain>:<listen_port>` pairs — generates Traefik TCP SNI routers on the `websecure` entrypoint (see [TCP SNI routing](#tcp-sni-routing-traefik-tcp-hosts)) |
 
 \* At least one of `lazy-tcp-proxy.ports` or `lazy-tcp-proxy.udp-ports` must be set. A container may use TCP only, UDP only, or both.
 
@@ -637,11 +638,76 @@ providers:
     pollInterval: "5s"
 ```
 
+### TCP SNI routing (`traefik-tcp-hosts`)
+
+For non-HTTP TCP services (databases, message brokers, etc.) Traefik can route by the TLS SNI
+field — the domain name the client sends in the TLS ClientHello — without requiring HTTP.
+This allows multiple TCP services to share port 443 (`websecure`) and be distinguished by
+domain name alone.
+
+```
+lazy-tcp-proxy.traefik-tcp-hosts=<domain>:<listen_port>
+```
+
+The same format as `traefik-hosts`: comma-separated `domain:listen_port` pairs.
+
+**Example — MongoDB behind Traefik:**
+```yaml
+labels:
+  - "lazy-tcp-proxy.enabled=true"
+  - "lazy-tcp-proxy.ports=27015:27017"
+  - "lazy-tcp-proxy.traefik-tcp-hosts=mongo.example.com:27015"
+```
+
+**Generated TCP section:**
+```json
+{
+  "tcp": {
+    "routers": {
+      "mongo-example-com-27015-router": {
+        "entryPoints": ["websecure"],
+        "rule": "HostSNI(`mongo.example.com`)",
+        "service": "mongo-example-com-27015-service",
+        "tls": { "certResolver": "myresolver" }
+      }
+    },
+    "services": {
+      "mongo-example-com-27015-service": {
+        "loadBalancer": {
+          "servers": [{ "address": "lazy-tcp-proxy:27015" }]
+        }
+      }
+    }
+  }
+}
+```
+
+**TLS requirement:** SNI routing requires the client to initiate a TLS handshake so that Traefik
+can read the SNI field. Traefik terminates TLS; the backend (lazy-tcp-proxy) receives plain TCP.
+
+```bash
+# MongoDB
+mongosh "mongodb://mongo.example.com:443/?tls=true"
+
+# Redis
+redis-cli -h redis.example.com -p 443 --tls
+
+# PostgreSQL
+psql "host=pg.example.com port=443 sslmode=require"
+```
+
+A service can have **both** `traefik-hosts` (HTTP) and `traefik-tcp-hosts` (TCP SNI) at the same
+time — they are placed in separate `http` and `tcp` sections of the Traefik config with no
+collision.
+
+The `tcp` key is absent from the `/traefik` response when no service has `traefik-tcp-hosts` set.
+
 ### Protocol support
 
-`traefik-hosts` only applies to **HTTP services** — Traefik's HTTP provider routes by `Host()`
-header, which requires HTTP. Raw TCP and UDP services do not benefit from domain routing via this
-integration; they continue to work directly on their listen ports.
+`traefik-hosts` applies to **HTTP services** — Traefik's HTTP provider routes by `Host()` header.
+`traefik-tcp-hosts` applies to **TCP services** that use TLS — Traefik routes by the SNI field in
+the TLS ClientHello. Both use the same `websecure` entrypoint (port 443); no additional Traefik
+static entrypoints are required.
 
 ### Full Docker Compose example
 
