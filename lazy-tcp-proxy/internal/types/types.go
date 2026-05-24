@@ -38,6 +38,7 @@ type TargetInfo struct {
 	BasicAuth       []string       // non-empty → require Authorization: Basic matching any "user:password" entry
 	DesiredReplicas int            // 0 = plain Docker container; ≥ 1 = swarm service (scale-to value)
 	TraefikHosts    []string       // e.g. ["whoami.localhost:9001"] — domain:listen_port pairs for Traefik HTTP provider
+	TraefikTCPHosts []string       // e.g. ["mongo.example.com:27015"] — domain:listen_port pairs for Traefik TCP SNI provider
 }
 
 // TargetHandler is implemented by the proxy server to receive target updates.

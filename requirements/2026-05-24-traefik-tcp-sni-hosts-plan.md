@@ -2,7 +2,7 @@
 
 **Requirement**: [2026-05-24-traefik-tcp-sni-hosts.md](2026-05-24-traefik-tcp-sni-hosts.md)
 **Date**: 2026-05-24
-**Status**: Draft
+**Status**: Implemented
 
 ## Implementation Steps
 

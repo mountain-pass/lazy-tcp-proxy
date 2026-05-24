@@ -46,6 +46,7 @@ type TargetSnapshot struct {
 	LastActive         *time.Time `json:"last_active"`
 	LastActiveRelative string     `json:"last_active_relative"`
 	TraefikHosts       []string   `json:"traefik_hosts,omitempty"`
+	TraefikTCPHosts    []string   `json:"traefik_tcp_hosts,omitempty"`
 }
 
 // relativeTime returns a human-readable string describing how long ago t was,
@@ -296,44 +297,6 @@ func (s *ProxyServer) isRunning(targetID string) (running, found bool) {
 	return
 }
 
-// UDPSnapshot returns a point-in-time copy of all registered UDP targets.
-func (s *ProxyServer) UDPSnapshot() []TargetSnapshot {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	now := time.Now()
-	out := make([]TargetSnapshot, 0, len(s.udpTargets))
-	for listenPort, uls := range s.udpTargets {
-		uls.mu.Lock()
-		lastActive := uls.lastActive
-		uls.mu.Unlock()
-		effective := lastActive
-		if effective.IsZero() {
-			effective = s.startTime
-		}
-		t := effective
-		id := uls.info.ContainerID
-		if len(id) > 12 {
-			id = id[:12]
-		}
-		out = append(out, TargetSnapshot{
-			ContainerID:        id,
-			ContainerName:      uls.info.ContainerName,
-			ListenPort:         listenPort,
-			TargetPort:         uls.targetPort,
-			Running:            uls.running,
-			LastActive:         &t,
-			LastActiveRelative: relativeTime(effective, now),
-		})
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].ContainerName != out[j].ContainerName {
-			return out[i].ContainerName < out[j].ContainerName
-		}
-		return out[i].ContainerID < out[j].ContainerID
-	})
-	return out
-}
-
 // Snapshot returns a point-in-time copy of all registered targets.
 func (s *ProxyServer) Snapshot() []TargetSnapshot {
 	s.mu.RLock()
@@ -360,6 +323,7 @@ func (s *ProxyServer) Snapshot() []TargetSnapshot {
 			LastActive:         &t,
 			LastActiveRelative: relativeTime(effective, now),
 			TraefikHosts:       ts.info.TraefikHosts,
+			TraefikTCPHosts:    ts.info.TraefikTCPHosts,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -587,7 +551,8 @@ func targetInfoEqual(a, b types.TargetInfo) bool {
 		a.TLS == b.TLS &&
 		reflect.DeepEqual(a.APIKey, b.APIKey) &&
 		reflect.DeepEqual(a.BasicAuth, b.BasicAuth) &&
-		reflect.DeepEqual(a.TraefikHosts, b.TraefikHosts)
+		reflect.DeepEqual(a.TraefikHosts, b.TraefikHosts) &&
+		reflect.DeepEqual(a.TraefikTCPHosts, b.TraefikTCPHosts)
 }
 
 // Update reconciles the proxy's registered targets with newTargets.
