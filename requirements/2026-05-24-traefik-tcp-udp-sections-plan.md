@@ -2,7 +2,7 @@
 
 **Requirement**: [2026-05-24-traefik-tcp-udp-sections.md](2026-05-24-traefik-tcp-udp-sections.md)
 **Date**: 2026-05-24
-**Status**: Draft
+**Status**: Implemented
 
 ## Implementation Steps
 

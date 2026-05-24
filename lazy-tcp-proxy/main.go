@@ -287,9 +287,38 @@ func runStatusServer(ctx context.Context, srv *proxy.ProxyServer, port int, trae
 	})
 	mux.HandleFunc("/traefik", func(w http.ResponseWriter, r *http.Request) {
 		raw := srv.Snapshot()
-		snaps := make([]traefikpkg.Snapshot, len(raw))
-		for i, s := range raw {
-			snaps[i] = traefikpkg.Snapshot{ListenPort: s.ListenPort, TraefikHosts: s.TraefikHosts}
+		rawUDP := srv.UDPSnapshot()
+
+		type cEntry struct {
+			tcpPorts     []int
+			udpPorts     []int
+			traefikHosts []string
+		}
+		byName := make(map[string]*cEntry)
+		for _, s := range raw {
+			e := byName[s.ContainerName]
+			if e == nil {
+				e = &cEntry{traefikHosts: s.TraefikHosts}
+				byName[s.ContainerName] = e
+			}
+			e.tcpPorts = append(e.tcpPorts, s.ListenPort)
+		}
+		for _, s := range rawUDP {
+			e := byName[s.ContainerName]
+			if e == nil {
+				e = &cEntry{}
+				byName[s.ContainerName] = e
+			}
+			e.udpPorts = append(e.udpPorts, s.ListenPort)
+		}
+		snaps := make([]traefikpkg.Snapshot, 0, len(byName))
+		for name, e := range byName {
+			snaps = append(snaps, traefikpkg.Snapshot{
+				ContainerName: name,
+				TCPPorts:      e.tcpPorts,
+				UDPPorts:      e.udpPorts,
+				TraefikHosts:  e.traefikHosts,
+			})
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(traefikpkg.BuildConfig(snaps, traefikProxyHost, traefikEntryPoint, traefikCertResolver)) //nolint:errcheck
