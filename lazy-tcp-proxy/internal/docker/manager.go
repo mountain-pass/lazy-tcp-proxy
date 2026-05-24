@@ -242,6 +242,10 @@ func (m *Manager) containerToTargetInfo(ctx context.Context, containerID string)
 	if v := strings.TrimSpace(inspect.Config.Labels["lazy-tcp-proxy.traefik-hosts"]); v != "" {
 		traefikHosts = types.ParseTraefikHosts("lazy-tcp-proxy.traefik-hosts", v)
 	}
+	var traefikTCPHosts []string
+	if v := strings.TrimSpace(inspect.Config.Labels["lazy-tcp-proxy.traefik-tcp-hosts"]); v != "" {
+		traefikTCPHosts = types.ParseTraefikHosts("lazy-tcp-proxy.traefik-tcp-hosts", v)
+	}
 
 	return types.TargetInfo{
 		ContainerID:     containerID,
@@ -264,6 +268,7 @@ func (m *Manager) containerToTargetInfo(ctx context.Context, containerID string)
 		APIKey:          apiKey,
 		BasicAuth:       basicAuth,
 		TraefikHosts:    traefikHosts,
+		TraefikTCPHosts: traefikTCPHosts,
 	}, nil
 }
 
@@ -782,6 +787,10 @@ func (m *Manager) serviceToTargetInfo(svc swarm.Service) (types.TargetInfo, erro
 	if v := strings.TrimSpace(labels["lazy-tcp-proxy.traefik-hosts"]); v != "" {
 		traefikHosts = types.ParseTraefikHosts("lazy-tcp-proxy.traefik-hosts", v)
 	}
+	var traefikTCPHosts []string
+	if v := strings.TrimSpace(labels["lazy-tcp-proxy.traefik-tcp-hosts"]); v != "" {
+		traefikTCPHosts = types.ParseTraefikHosts("lazy-tcp-proxy.traefik-tcp-hosts", v)
+	}
 
 	running := svc.ServiceStatus != nil && svc.ServiceStatus.RunningTasks > 0
 
@@ -804,6 +813,7 @@ func (m *Manager) serviceToTargetInfo(svc swarm.Service) (types.TargetInfo, erro
 		HasHealthCheck:  false,
 		DesiredReplicas: scale,
 		TraefikHosts:    traefikHosts,
+		TraefikTCPHosts: traefikTCPHosts,
 	}, nil
 }
 

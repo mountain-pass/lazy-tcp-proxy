@@ -40,6 +40,7 @@ type ServiceEntry struct {
 	BasicAuth        []string `yaml:"basic_auth,omitempty"        json:"basic_auth,omitempty"`
 	Scale            *int     `yaml:"scale,omitempty"             json:"scale,omitempty"`
 	TraefikHosts     []string `yaml:"traefik_hosts,omitempty"     json:"traefik_hosts,omitempty"`
+	TraefikTCPHosts  []string `yaml:"traefik_tcp_hosts,omitempty"  json:"traefik_tcp_hosts,omitempty"`
 }
 
 // Store manages a YAML config file on disk and the in-memory config it represents.
@@ -243,6 +244,7 @@ func entryToTargetInfo(entry ServiceEntry) (types.TargetInfo, error) {
 	info.APIKey = entry.APIKey
 	info.BasicAuth = entry.BasicAuth
 	info.TraefikHosts = entry.TraefikHosts
+	info.TraefikTCPHosts = entry.TraefikTCPHosts
 
 	if entry.Scale != nil && *entry.Scale >= 1 {
 		info.DesiredReplicas = *entry.Scale
