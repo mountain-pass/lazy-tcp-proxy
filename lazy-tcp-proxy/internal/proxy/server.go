@@ -296,6 +296,44 @@ func (s *ProxyServer) isRunning(targetID string) (running, found bool) {
 	return
 }
 
+// UDPSnapshot returns a point-in-time copy of all registered UDP targets.
+func (s *ProxyServer) UDPSnapshot() []TargetSnapshot {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	now := time.Now()
+	out := make([]TargetSnapshot, 0, len(s.udpTargets))
+	for listenPort, uls := range s.udpTargets {
+		uls.mu.Lock()
+		lastActive := uls.lastActive
+		uls.mu.Unlock()
+		effective := lastActive
+		if effective.IsZero() {
+			effective = s.startTime
+		}
+		t := effective
+		id := uls.info.ContainerID
+		if len(id) > 12 {
+			id = id[:12]
+		}
+		out = append(out, TargetSnapshot{
+			ContainerID:        id,
+			ContainerName:      uls.info.ContainerName,
+			ListenPort:         listenPort,
+			TargetPort:         uls.targetPort,
+			Running:            uls.running,
+			LastActive:         &t,
+			LastActiveRelative: relativeTime(effective, now),
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].ContainerName != out[j].ContainerName {
+			return out[i].ContainerName < out[j].ContainerName
+		}
+		return out[i].ContainerID < out[j].ContainerID
+	})
+	return out
+}
+
 // Snapshot returns a point-in-time copy of all registered targets.
 func (s *ProxyServer) Snapshot() []TargetSnapshot {
 	s.mu.RLock()
