@@ -63,6 +63,8 @@ services:
 #      - "user:password"
 #    traefik_hosts:
 #      - "myapp.localhost:9000"
+#    traefik_tcp_hosts:
+#      - "mongo.localhost:27015"
 ```
 
 ### Docker Compose setup
@@ -118,6 +120,8 @@ services:
       - "nick:somepassword"
     traefik_hosts:
       - "myapp.localhost:9000"    # domain:listen_port pairs for Traefik HTTP provider
+    traefik_tcp_hosts:
+      - "mongo.localhost:9001"    # domain:listen_port pairs for Traefik TCP SNI routing
 ```
 
 See [README_LABELS.md](README_LABELS.md) for full descriptions of each field — the YAML fields
