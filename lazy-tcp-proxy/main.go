@@ -176,6 +176,10 @@ const statusDashboardHTML = `<!DOCTYPE html>
       border-radius: 4px; padding: 2px 8px; color: #a78bfa; text-decoration: none;
     }
     .traefik-host:hover { background: #2d2560; color: #c4b5fd; }
+    .traefik-tcp-host {
+      font-size: 0.78rem; background: #0d2a2a; border: 1px solid #0e7490;
+      border-radius: 4px; padding: 2px 8px; color: #22d3ee;
+    }
     .traefik-label { font-size: 0.68rem; color: #475569; text-transform: uppercase; letter-spacing: 0.05em; }
     .active-conns { color: #60a5fa; font-weight: 600; }
     .empty { color: #475569; font-style: italic; }
@@ -239,9 +243,22 @@ const statusDashboardHTML = `<!DOCTYPE html>
             if (!seen.has(domain)) { seen.add(domain); traefikDomains.push(domain); }
           }
         }
+        const traefikTCPDomains = [];
+        const seenTCP = new Set();
+        for (const p of group.ports) {
+          for (const h of (p.traefik_tcp_hosts || [])) {
+            const domain = h.substring(0, h.lastIndexOf(':')) || h;
+            if (!seenTCP.has(domain)) { seenTCP.add(domain); traefikTCPDomains.push(domain); }
+          }
+        }
         const traefikSection = traefikDomains.length
           ? '<div><div class="traefik-label">Traefik</div><div class="traefik-hosts">' +
               traefikDomains.map(d => '<a class="traefik-host" target="_blank" href="http://' + esc(d) + '">' + esc(d) + '</a>').join('') +
+            '</div></div>'
+          : '';
+        const traefikTCPSection = traefikTCPDomains.length
+          ? '<div><div class="traefik-label">Traefik TCP</div><div class="traefik-hosts">' +
+              traefikTCPDomains.map(d => '<span class="traefik-tcp-host">' + esc(d) + '</span>').join('') +
             '</div></div>'
           : '';
 
@@ -253,6 +270,7 @@ const statusDashboardHTML = `<!DOCTYPE html>
             '</div>' +
             '<div class="ports">' + portBadges + '</div>' +
             traefikSection +
+            traefikTCPSection +
           '</div>';
       }
       el.innerHTML = html;
