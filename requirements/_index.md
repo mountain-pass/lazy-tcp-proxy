@@ -85,4 +85,4 @@
 | REQ-081 | Traefik TCP and UDP Provider Sections                                    | Medium | Completed ⚠️ superseded by REQ-082 (Traefik TCP SNI via traefik_tcp_hosts) | 2026-05-24 | [2026-05-24-traefik-tcp-udp-sections.md](2026-05-24-traefik-tcp-udp-sections.md) |
 | REQ-082 | Traefik TCP SNI Routing via `traefik_tcp_hosts`                          | Medium | Completed     | 2026-05-24 | [2026-05-24-traefik-tcp-sni-hosts.md](2026-05-24-traefik-tcp-sni-hosts.md) |
 | REQ-083 | Container Availability Config (`availability`)                           | Medium | Completed     | 2026-05-27 | [2026-05-27-container-availability-config.md](2026-05-27-container-availability-config.md) |
-| REQ-084 | Status Dashboard — Cards to Table Layout                                 | Low    | In Progress   | 2026-05-27 | [2026-05-27-cards-to-table-layout.md](2026-05-27-cards-to-table-layout.md) |
+| REQ-084 | Status Dashboard — Cards to Table Layout                                 | Low    | Completed     | 2026-05-27 | [2026-05-27-cards-to-table-layout.md](2026-05-27-cards-to-table-layout.md) |

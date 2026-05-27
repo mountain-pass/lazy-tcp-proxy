@@ -137,143 +137,120 @@ const statusDashboardHTML = `<!DOCTYPE html>
       background: #0f1117;
       color: #e2e8f0;
       padding: 2rem;
+      overflow-x: auto;
     }
     h1 { font-size: 1.4rem; font-weight: 600; margin-bottom: 0.5rem; color: #f8fafc; }
     #last-updated { font-size: 0.75rem; color: #64748b; margin-bottom: 1.5rem; }
     #error { color: #f87171; margin-bottom: 1rem; font-size: 0.875rem; min-height: 1.2em; }
-    #containers { display: flex; flex-direction: column; gap: 0.75rem; }
-    .container-card {
-      background: #1e2330;
-      border: 1px solid #2d3748;
-      border-radius: 8px;
-      padding: 1rem 1.25rem;
-	  max-width: 400px;
-	  width: 100%;
-	  margin: auto;
-	  display: flex;
-	  flex-direction: column;
-	  gap: 0.75rem;
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      min-width: 600px;
+      font-size: 0.85rem;
     }
-	.flex { display: flex; align-items: center; gap: 0.5rem; }
-    .container-header { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; space-y: 1rem; flex-wrap: wrap; }
-    .container-name { font-weight: 600; font-size: 1rem; }
-    .status-badge {
-      font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
-      padding: 2px 8px; border-radius: 999px; letter-spacing: 0.05em;
+    thead th {
+      text-align: left;
+      padding: 0.4rem 1rem;
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #64748b;
+      border-bottom: 1px solid #2d3748;
     }
-    .status-up   { background: #166534; color: #4ade80; }
-    .status-idle { background: #713f12; color: #fbbf24; }
-    .status-down { background: #7f1d1d; color: #f87171; }
-    .container-id { font-size: 0.7rem; color: #475569; font-family: monospace; margin-left: auto; }
-    .ports { display: flex; flex-wrap: wrap; gap: 0.5rem; justify-content: flex-end; }
-    .port-entry {
-      font-size: 0.78rem; background: #263044; border: 1px solid #374151;
-      border-radius: 4px; padding: 2px 8px; color: #94a3b8;
+    tbody tr { border-bottom: 1px solid #1e2330; }
+    tbody tr:last-child { border-bottom: none; }
+    tbody td {
+      padding: 0.5rem 1rem;
+      vertical-align: middle;
+      font-family: monospace;
+      white-space: nowrap;
     }
-    .traefik-hosts { display: flex; flex-wrap: wrap; gap: 0.5rem; }
-    .traefik-host {
-      font-size: 0.78rem; background: #1e1a3a; border: 1px solid #4c3f8a;
-      border-radius: 4px; padding: 2px 8px; color: #a78bfa; text-decoration: none;
-    }
-    .traefik-host:hover { background: #2d2560; color: #c4b5fd; }
-    .traefik-tcp-host {
-      font-size: 0.78rem; background: #0d2a2a; border: 1px solid #0e7490;
-      border-radius: 4px; padding: 2px 8px; color: #22d3ee;
-    }
-    .traefik-label { font-size: 0.68rem; color: #475569; text-transform: uppercase; letter-spacing: 0.05em; }
-    .active-conns { color: #60a5fa; font-weight: 600; }
-    .empty { color: #475569; font-style: italic; }
+    .col-dns { color: #a78bfa; }
+    .col-dns a { color: #a78bfa; text-decoration: none; }
+    .col-dns a:hover { color: #c4b5fd; text-decoration: underline; }
+    .col-dns .tcp-host { color: #22d3ee; }
+    .col-proxy { color: #94a3b8; }
+    .col-target { color: #94a3b8; }
+    .col-conns { color: #60a5fa; text-align: right; }
+    .empty { color: #475569; font-style: italic; font-family: sans-serif; padding: 1rem; }
   </style>
 </head>
 <body>
   <h1>Lazy TCP Proxy</h1>
   <div id="last-updated">Loading…</div>
   <div id="error"></div>
-  <div id="containers"></div>
+  <table>
+    <thead>
+      <tr>
+        <th>dns</th>
+        <th>proxy</th>
+        <th>target</th>
+        <th>connections</th>
+      </tr>
+    </thead>
+    <tbody id="proxy-table-body"></tbody>
+  </table>
   <script>
-    const statusRank = { up: 3, idle: 2, down: 1 };
-
-    function statusOf(running, activeConns) {
-      if (!running) return 'down';
-      return activeConns > 0 ? 'up' : 'idle';
-    }
-
     function esc(s) {
       return String(s)
         .replace(/&/g,'&amp;').replace(/</g,'&lt;')
         .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     }
 
+    function statusIcon(snap) {
+      if (!snap.running) return '🔴';
+      return snap.active_conns > 0 ? '🟢' : '🟠';
+    }
+
+    function dnsForPort(snap) {
+      const entries = [];
+      const port = snap.listen_port;
+      for (const h of (snap.traefik_hosts || [])) {
+        const idx = h.lastIndexOf(':');
+        if (idx < 1 || parseInt(h.substring(idx + 1)) !== port) continue;
+        const domain = h.substring(0, idx);
+        entries.push({ url: 'https://' + domain, tcp: false });
+      }
+      for (const h of (snap.traefik_tcp_hosts || [])) {
+        const idx = h.lastIndexOf(':');
+        if (idx < 1 || parseInt(h.substring(idx + 1)) !== port) continue;
+        const domain = h.substring(0, idx);
+        entries.push({ url: 'tcp://' + domain, tcp: true });
+      }
+      return entries;
+    }
+
     function render(data) {
-      const el = document.getElementById('containers');
+      const tbody = document.getElementById('proxy-table-body');
       if (!data.length) {
-        el.innerHTML = '<p class="empty">No containers registered.</p>';
+        tbody.innerHTML = '<tr><td colspan="4" class="empty">No services registered.</td></tr>';
         return;
       }
-
-      // Group by container_id, preserving insertion order (already sorted by server)
-      const groups = new Map();
-      for (const snap of data) {
-        const key = snap.container_id || snap.container_name;
-        if (!groups.has(key)) {
-          groups.set(key, { name: snap.container_name, id: snap.container_id, ports: [] });
-        }
-        groups.get(key).ports.push(snap);
-      }
-
       let html = '';
-      for (const group of groups.values()) {
-        // Overall status: best port status wins (up > idle > down)
-        let best = 'down';
-        for (const p of group.ports) {
-          const s = statusOf(p.running, p.active_conns);
-          if (statusRank[s] > statusRank[best]) best = s;
-        }
-
-        const portBadges = group.ports.sort((a, b) => a.listen_port - b.listen_port).map(p => {
-          return '<a class="port-entry" target="_blank" href="' + window.location.protocol + '//' + window.location.hostname + ':' + p.listen_port + '">:' + p.listen_port + ' (' + p.active_conns + ')' + '</a>';
-        }).join('');
-
-        // Collect unique traefik host entries from all ports (format: "domain:listenPort")
-        const traefikDomains = [];
-        const seen = new Set();
-        for (const p of group.ports) {
-          for (const h of (p.traefik_hosts || [])) {
-            const domain = h.substring(0, h.lastIndexOf(':')) || h;
-            if (!seen.has(domain)) { seen.add(domain); traefikDomains.push(domain); }
-          }
-        }
-        const traefikTCPDomains = [];
-        const seenTCP = new Set();
-        for (const p of group.ports) {
-          for (const h of (p.traefik_tcp_hosts || [])) {
-            const domain = h.substring(0, h.lastIndexOf(':')) || h;
-            if (!seenTCP.has(domain)) { seenTCP.add(domain); traefikTCPDomains.push(domain); }
-          }
-        }
-        const traefikSection = traefikDomains.length
-          ? '<div><div class="traefik-label">Traefik</div><div class="traefik-hosts">' +
-              traefikDomains.map(d => '<a class="traefik-host" target="_blank" href="http://' + esc(d) + '">' + esc(d) + '</a>').join('') +
-            '</div></div>'
+      for (const snap of data) {
+        const udp = snap.is_udp ? '/udp' : '';
+        const dns = dnsForPort(snap);
+        const dnsHtml = dns.length
+          ? dns.map(e => e.tcp
+              ? '<div><span class="tcp-host">' + esc(e.url) + '</span></div>'
+              : '<div><a href="' + esc(e.url) + '" target="_blank">' + esc(e.url) + '</a></div>'
+            ).join('')
           : '';
-        const traefikTCPSection = traefikTCPDomains.length
-          ? '<div><div class="traefik-label">Traefik TCP</div><div class="traefik-hosts">' +
-              traefikTCPDomains.map(d => '<span class="traefik-tcp-host">' + esc(d) + '</span>').join('') +
-            '</div></div>'
-          : '';
-
+        const proxyCell = (snap.has_auth ? '🔒' : '🔓') +
+          ' :' + snap.listen_port + udp +
+          ' [' + esc(snap.availability) + ']';
+        const targetCell = statusIcon(snap) +
+          ' ' + esc(snap.container_name) + ':' + snap.target_port + udp;
         html +=
-          '<div class="container-card">' +
-            '<div class="container-header">' +
-              '<span class="container-name">' + esc(group.name) + '</span>' +
-                '<span class="status-badge status-' + best + '">' + best + '</span>' +
-            '</div>' +
-            '<div class="ports">' + portBadges + '</div>' +
-            traefikSection +
-            traefikTCPSection +
-          '</div>';
+          '<tr>' +
+          '<td class="col-dns">' + dnsHtml + '</td>' +
+          '<td class="col-proxy">' + proxyCell + '</td>' +
+          '<td class="col-target">' + targetCell + '</td>' +
+          '<td class="col-conns">' + snap.active_conns + '</td>' +
+          '</tr>';
       }
-      el.innerHTML = html;
+      tbody.innerHTML = html;
     }
 
     async function refresh() {
