@@ -209,6 +209,7 @@ func (m *Manager) containerToTargetInfo(ctx context.Context, containerID string)
 
 	cronStart := parseCronLabel(name, "lazy-tcp-proxy.cron-start", inspect.Config.Labels["lazy-tcp-proxy.cron-start"])
 	cronStop := parseCronLabel(name, "lazy-tcp-proxy.cron-stop", inspect.Config.Labels["lazy-tcp-proxy.cron-stop"])
+	availability := types.ParseAvailabilityLabel(name, inspect.Config.Labels["lazy-tcp-proxy.availability"])
 
 	httpHealthCheck := types.ParseHTTPHealthCheckLabel(name, inspect.Config.Labels["lazy-tcp-proxy.http-healthcheck"])
 	if httpHealthCheck != "" {
@@ -269,6 +270,7 @@ func (m *Manager) containerToTargetInfo(ctx context.Context, containerID string)
 		BasicAuth:       basicAuth,
 		TraefikHosts:    traefikHosts,
 		TraefikTCPHosts: traefikTCPHosts,
+		Availability:    availability,
 	}, nil
 }
 
