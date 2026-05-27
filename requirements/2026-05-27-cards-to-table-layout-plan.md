@@ -7,19 +7,18 @@
 ## Implementation Steps
 
 1. **`internal/proxy/server.go` — extend `TargetSnapshot`**
-   Add four new exported fields after `TraefikTCPHosts`:
+   Add three new exported fields after `TraefikTCPHosts`:
    ```go
    IsUDP        bool   `json:"is_udp"`
    HasAuth      bool   `json:"has_auth"`
-   TLSEnabled   bool   `json:"tls_enabled"`
    Availability string `json:"availability"`
    ```
+   `TLSEnabled` is not added — it is not needed for the dashboard display.
 
 2. **`internal/proxy/server.go` — update `Snapshot()` for TCP entries**
-   Populate the four new fields on each TCP `TargetSnapshot`:
+   Populate the three new fields on each TCP `TargetSnapshot`:
    - `IsUDP: false`
    - `HasAuth: len(ts.apiKey) > 0 || len(ts.basicAuth) > 0`
-   - `TLSEnabled: ts.tlsEnabled`
    - `Availability: types.EffectiveAvailability(ts.info)`
 
 3. **`internal/proxy/server.go` — add UDP entries to `Snapshot()`**
@@ -27,7 +26,7 @@
    - Capture `lastActive` under `uls.mu` (same pattern as `checkInactivity`).
    - If zero, fall back to `s.startTime`.
    - Emit a `TargetSnapshot` with:
-     - `IsUDP: true`, `HasAuth: false`, `TLSEnabled: false`
+     - `IsUDP: true`, `HasAuth: false`
      - `ActiveConns: uls.activeFlows.Load()`
      - `Availability: types.EffectiveAvailability(uls.info)`
      - `Running: uls.running`
@@ -45,8 +44,9 @@
      - Iterate `data` directly (rows are already one-per-port, sorted).
      - For each `snap`, compute the DNS cell by filtering `traefik_hosts` /
        `traefik_tcp_hosts` where the port suffix equals `snap.listen_port`.
-       Use `https://domain` when `snap.tls_enabled`, `http://domain` otherwise
-       for `traefik_hosts`; `tcp://domain` for `traefik_tcp_hosts`.
+       Always use `http://domain` for `traefik_hosts`;
+       always use `tcp://domain` for `traefik_tcp_hosts`.
+       `tls_enabled` is not used in the DNS column.
      - Proxy cell: `(snap.has_auth ? '🔒' : '🔓') + ' :' + snap.listen_port +
        (snap.is_udp ? '/udp' : '') + ' [' + snap.availability + ']'`
      - Target cell: status icon + `snap.container_name + ':' + snap.target_port +
@@ -83,7 +83,6 @@ type TargetSnapshot struct {
     TraefikTCPHosts    []string   `json:"traefik_tcp_hosts,omitempty"`
     IsUDP              bool       `json:"is_udp"`
     HasAuth            bool       `json:"has_auth"`
-    TLSEnabled         bool       `json:"tls_enabled"`
     Availability       string     `json:"availability"`
 }
 ```
@@ -114,10 +113,9 @@ for listenPort, uls := range s.udpTargets {
         LastActiveRelative: relativeTime(lastAct, now),
         TraefikHosts:       uls.info.TraefikHosts,
         TraefikTCPHosts:    uls.info.TraefikTCPHosts,
-        IsUDP:              true,
-        HasAuth:            false,
-        TLSEnabled:         false,
-        Availability:       types.EffectiveAvailability(uls.info),
+        IsUDP:        true,
+        HasAuth:      false,
+        Availability: types.EffectiveAvailability(uls.info),
     })
 }
 ```
@@ -145,8 +143,7 @@ function dnsForPort(snap) {
   for (const h of (snap.traefik_hosts || [])) {
     const idx = h.lastIndexOf(':');
     if (idx < 1 || parseInt(h.substring(idx + 1)) !== port) continue;
-    const domain = h.substring(0, idx);
-    entries.push((snap.tls_enabled ? 'https' : 'http') + '://' + domain);
+    entries.push('http://' + h.substring(0, idx));
   }
   for (const h of (snap.traefik_tcp_hosts || [])) {
     const idx = h.lastIndexOf(':');
