@@ -324,6 +324,7 @@ func (b *Backend) deploymentToTargetInfo(d appsv1.Deployment) (types.TargetInfo,
 
 	cronStart := parseCronAnnotation(d.Name, "lazy-tcp-proxy.cron-start", ann["lazy-tcp-proxy.cron-start"])
 	cronStop := parseCronAnnotation(d.Name, "lazy-tcp-proxy.cron-stop", ann["lazy-tcp-proxy.cron-stop"])
+	availability := types.ParseAvailabilityLabel(d.Name, ann["lazy-tcp-proxy.availability"])
 
 	httpHealthCheck := types.ParseHTTPHealthCheckLabel(d.Name, ann["lazy-tcp-proxy.http-healthcheck"])
 	if httpHealthCheck != "" {
@@ -360,6 +361,7 @@ func (b *Backend) deploymentToTargetInfo(d appsv1.Deployment) (types.TargetInfo,
 		TLS:             https,
 		APIKey:          apiKey,
 		BasicAuth:       basicAuth,
+		Availability:    availability,
 	}, nil
 }
 

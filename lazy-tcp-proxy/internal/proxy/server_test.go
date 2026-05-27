@@ -529,6 +529,107 @@ func TestCheckInactivity_TCPIdleButUDPActiveDoesNotStop(t *testing.T) {
 	}
 }
 
+// ---- availability / checkInactivity ----
+
+func TestCheckInactivity_SkipsExplicitCronAvailability(t *testing.T) {
+	stopped := make(chan string, 1)
+	s := newTestServerWithStopper(func(id string) { stopped <- id })
+
+	s.targets[9000] = &targetState{
+		info: types.TargetInfo{
+			ContainerID:  "ctr-1",
+			ContainerName: "svc",
+			Availability: types.AvailabilityCron,
+		},
+		targetPort: 80,
+		running:    true,
+		lastActive: time.Now().Add(-10 * time.Minute),
+	}
+
+	s.checkInactivity(context.Background())
+
+	select {
+	case <-stopped:
+		t.Error("should not stop a container with explicit cron availability")
+	default:
+	}
+}
+
+func TestCheckInactivity_SkipsManualAvailability(t *testing.T) {
+	stopped := make(chan string, 1)
+	s := newTestServerWithStopper(func(id string) { stopped <- id })
+
+	s.targets[9000] = &targetState{
+		info: types.TargetInfo{
+			ContainerID:  "ctr-1",
+			ContainerName: "svc",
+			Availability: types.AvailabilityManual,
+		},
+		targetPort: 80,
+		running:    true,
+		lastActive: time.Now().Add(-10 * time.Minute),
+	}
+
+	s.checkInactivity(context.Background())
+
+	select {
+	case <-stopped:
+		t.Error("should not stop a container with manual availability")
+	default:
+	}
+}
+
+func TestCheckInactivity_SkipsDerivedCron(t *testing.T) {
+	stopped := make(chan string, 1)
+	s := newTestServerWithStopper(func(id string) { stopped <- id })
+
+	s.targets[9000] = &targetState{
+		info: types.TargetInfo{
+			ContainerID:  "ctr-1",
+			ContainerName: "svc",
+			CronStart:    "0 9 * * 1-5",
+		},
+		targetPort: 80,
+		running:    true,
+		lastActive: time.Now().Add(-10 * time.Minute),
+	}
+
+	s.checkInactivity(context.Background())
+
+	select {
+	case <-stopped:
+		t.Error("should not stop a container with derived-cron availability (CronStart set)")
+	default:
+	}
+}
+
+func TestCheckInactivity_AppliesExplicitOnDemand(t *testing.T) {
+	stopped := make(chan string, 1)
+	s := newTestServerWithStopper(func(id string) { stopped <- id })
+
+	s.targets[9000] = &targetState{
+		info: types.TargetInfo{
+			ContainerID:  "ctr-1",
+			ContainerName: "svc",
+			Availability: types.AvailabilityOnDemand,
+		},
+		targetPort: 80,
+		running:    true,
+		lastActive: time.Now().Add(-10 * time.Minute),
+	}
+
+	s.checkInactivity(context.Background())
+
+	select {
+	case id := <-stopped:
+		if id != "ctr-1" {
+			t.Errorf("expected ctr-1 to be stopped, got %s", id)
+		}
+	default:
+		t.Error("expected container with ondemand availability to be stopped when idle")
+	}
+}
+
 // ---- helpers ----
 
 // mockBackend satisfies containerBackend for unit tests.

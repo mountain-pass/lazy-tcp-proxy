@@ -479,8 +479,11 @@ func (s *ProxyServer) RegisterTarget(info types.TargetInfo) {
 	// Keep name→ID map current for cascade lookups.
 	s.nameToID[info.ContainerName] = info.ContainerID
 
-	// Register with cron scheduler if any schedule is set.
-	if s.sched != nil && (info.CronStart != "" || info.CronStop != "") {
+	// Register with cron scheduler only when the effective availability is cron
+	// and at least one cron expression is present.
+	if s.sched != nil &&
+		types.EffectiveAvailability(info) == types.AvailabilityCron &&
+		(info.CronStart != "" || info.CronStop != "") {
 		s.sched.Register(info)
 	}
 }
@@ -547,6 +550,7 @@ func targetInfoEqual(a, b types.TargetInfo) bool {
 		reflect.DeepEqual(a.Dependants, b.Dependants) &&
 		a.CronStart == b.CronStart &&
 		a.CronStop == b.CronStop &&
+		a.Availability == b.Availability &&
 		a.HTTPHealthCheck == b.HTTPHealthCheck &&
 		a.TLS == b.TLS &&
 		reflect.DeepEqual(a.APIKey, b.APIKey) &&
@@ -685,8 +689,8 @@ func (s *ProxyServer) checkInactivity(ctx context.Context) {
 		if ts.removed {
 			continue
 		}
-		if ts.info.CronStart != "" || ts.info.CronStop != "" {
-			continue // lifecycle managed by cron scheduler
+		if types.EffectiveAvailability(ts.info) != types.AvailabilityOnDemand {
+			continue // lifecycle not managed on-demand
 		}
 		e, ok := byContainer[ts.info.ContainerID]
 		if !ok {
@@ -704,8 +708,8 @@ func (s *ProxyServer) checkInactivity(ctx context.Context) {
 		if uls.removed {
 			continue
 		}
-		if uls.info.CronStart != "" || uls.info.CronStop != "" {
-			continue // lifecycle managed by cron scheduler
+		if types.EffectiveAvailability(uls.info) != types.AvailabilityOnDemand {
+			continue // lifecycle not managed on-demand
 		}
 		e, ok := byContainer[uls.info.ContainerID]
 		if !ok {
@@ -881,30 +885,32 @@ func (s *ProxyServer) handleConn(conn net.Conn, ts *targetState) {
 		}()
 	}
 
-	_, startErr, shared := s.startGroup.Do(ts.info.ContainerID, func() (any, error) {
-		return nil, s.backend.EnsureRunning(ctx, ts.info.ContainerID)
-	})
-	if shared {
-		log.Printf("proxy: joined in-flight startup for \033[33m%s\033[0m", ts.info.ContainerName)
-	}
-	if startErr != nil {
-		log.Printf("proxy: could not start container \033[33m%s\033[0m: %v", ts.info.ContainerName, startErr)
-		return
-	}
-	s.mu.Lock()
-	for _, t := range s.targets {
-		if t.info.ContainerID == ts.info.ContainerID {
-			t.running = true
+	if ts.info.Availability != types.AvailabilityCron && ts.info.Availability != types.AvailabilityManual {
+		_, startErr, shared := s.startGroup.Do(ts.info.ContainerID, func() (any, error) {
+			return nil, s.backend.EnsureRunning(ctx, ts.info.ContainerID)
+		})
+		if shared {
+			log.Printf("proxy: joined in-flight startup for \033[33m%s\033[0m", ts.info.ContainerName)
 		}
-	}
-	for _, u := range s.udpTargets {
-		if u.info.ContainerID == ts.info.ContainerID {
-			u.running = true
+		if startErr != nil {
+			log.Printf("proxy: could not start container \033[33m%s\033[0m: %v", ts.info.ContainerName, startErr)
+			return
 		}
-	}
-	s.mu.Unlock()
-	if ts.info.WebhookURL != "" {
-		go s.fireWebhook(ts.info.WebhookURL, "container_started", ts.info.ContainerID, ts.info.ContainerName, "", "", 0)
+		s.mu.Lock()
+		for _, t := range s.targets {
+			if t.info.ContainerID == ts.info.ContainerID {
+				t.running = true
+			}
+		}
+		for _, u := range s.udpTargets {
+			if u.info.ContainerID == ts.info.ContainerID {
+				u.running = true
+			}
+		}
+		s.mu.Unlock()
+		if ts.info.WebhookURL != "" {
+			go s.fireWebhook(ts.info.WebhookURL, "container_started", ts.info.ContainerID, ts.info.ContainerName, "", "", 0)
+		}
 	}
 
 	// Determine preferred network hint (first network ID in list; unused in k8s mode)

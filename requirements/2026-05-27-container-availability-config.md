@@ -2,7 +2,7 @@
 
 **Date Added**: 2026-05-27
 **Priority**: Medium
-**Status**: In Progress
+**Status**: Completed
 
 ## Problem Statement
 
@@ -99,21 +99,21 @@ services:
 
 ## Acceptance Criteria
 
-- [ ] `availability: manual` — proxy forwards connections; `EnsureRunning` is
+- [x] `availability: manual` — proxy forwards connections; `EnsureRunning` is
   never called; idle timeout checker skips the target; cron scheduler not used.
-- [ ] `availability: cron` (explicit) — connections are forwarded without
+- [x] `availability: cron` (explicit) — connections are forwarded without
   calling `EnsureRunning`; idle timeout checker skips the target; cron scheduler
   active if cron expressions present.
-- [ ] `availability: ondemand` (explicit) — on-demand start and idle timeout
+- [x] `availability: ondemand` (explicit) — on-demand start and idle timeout
   active; cron expressions present → warning logged, cron scheduler not used.
-- [ ] No `availability` label, cron expressions present → backward-compatible
+- [x] No `availability` label, cron expressions present → backward-compatible
   "derived cron": `EnsureRunning` still called on connection, idle timeout
   skipped, cron scheduler active.
-- [ ] No `availability` label, no cron expressions → existing on-demand
+- [x] No `availability` label, no cron expressions → existing on-demand
   behaviour unchanged.
-- [ ] Invalid `availability` value → warning logged, derived behaviour used.
-- [ ] All existing unit and integration tests continue to pass.
-- [ ] `README_LABELS.md` and `README_CONFIG.md` updated with the new field.
+- [x] Invalid `availability` value → warning logged, derived behaviour used.
+- [x] All existing unit and integration tests continue to pass.
+- [x] `README_LABELS.md` and `README_CONFIG.md` updated with the new field.
 
 ## Dependencies
 

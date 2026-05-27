@@ -2,7 +2,7 @@
 
 **Requirement**: [2026-05-27-container-availability-config.md](2026-05-27-container-availability-config.md)
 **Date**: 2026-05-27
-**Status**: Draft
+**Status**: Implemented
 
 ## Implementation Steps
 

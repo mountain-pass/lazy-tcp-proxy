@@ -55,6 +55,7 @@ services:
 #    dependants: ["other-service"]
 #    cron_start: "0 9 * * 1-5"
 #    cron_stop:  "0 17 * * 1-5"
+#    availability: "ondemand"   # ondemand (default), cron, or manual
 #    http_healthcheck: "http://{{container}}:8080/health"
 #    tls: true
 #    api_key:
@@ -112,6 +113,7 @@ services:
       - "other-service"           # cascade start/stop to these containers
     cron_start: "0 9 * * 1-5"    # start Mon–Fri at 09:00
     cron_stop:  "0 17 * * 1-5"   # stop  Mon–Fri at 17:00
+    availability: "ondemand"     # ondemand (default), cron (schedule-only), or manual (passthrough)
     http_healthcheck: "http://{{container}}:8080/health"
     tls: true                     # wrap listener with TLS (shared self-signed cert)
     api_key:                      # require X-API-Key header matching any listed value

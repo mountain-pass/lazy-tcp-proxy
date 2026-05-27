@@ -24,6 +24,7 @@ Add these labels to any container you want proxied/managed:
 | `lazy-tcp-proxy.start-timeout-secs` | No | Override the global `START_TIMEOUT_SECS` for this container only (seconds). How long to wait for the upstream to respond to the first UDP datagram after a cold start before stopping the container and giving up |
 | `lazy-tcp-proxy.webhook-url` | No | HTTP(S) URL to POST lifecycle events to (see [Webhooks](#webhooks)) |
 | `lazy-tcp-proxy.dependants` | No | Comma-separated names of other managed containers/deployments that should start and stop alongside this one (see [Dependency Cascade](#dependency-cascade)) |
+| `lazy-tcp-proxy.availability` | No | Lifecycle management mode: `ondemand` (default — start on connection, stop when idle), `cron` (start/stop via cron schedule only; proxy does not start on connection), or `manual` (no lifecycle management; proxy forwards traffic only). Derived automatically when omitted: `cron` if either cron label is set, `ondemand` otherwise (see [Availability Modes](#availability-modes)) |
 | `lazy-tcp-proxy.cron-start` | No | 5-field cron expression — start the container/deployment on this schedule (see [Cron Scheduling](#cron-scheduling)) |
 | `lazy-tcp-proxy.cron-stop` | No | 5-field cron expression — stop the container/deployment on this schedule (see [Cron Scheduling](#cron-scheduling)) |
 | `lazy-tcp-proxy.http-healthcheck` | No | URL to poll after a cold start — proxy waits for a 2xx response before forwarding TCP traffic. Supports `{{container}}` placeholder (see [HTTP Health Check](#http-health-check)) |
@@ -289,6 +290,36 @@ labels:
   - "lazy-tcp-proxy.enabled=true"
   - "lazy-tcp-proxy.ports=9000:80"
   - "lazy-tcp-proxy.webhook-url=https://hooks.example.com/my-service"
+```
+
+---
+
+## Availability Modes
+
+The `lazy-tcp-proxy.availability` label controls how the proxy manages the container's lifecycle.
+
+| Value | On-demand start | Idle timeout | Cron scheduling |
+|-------|-----------------|--------------|-----------------|
+| `ondemand` | ✅ yes | ✅ yes | ❌ no |
+| `cron` | ❌ no | ❌ no | ✅ yes (if cron labels set) |
+| `manual` | ❌ no | ❌ no | ❌ no |
+
+When the label is **not set**, the mode is derived automatically:
+- `cron-start` or `cron-stop` is present → `cron`
+- Neither cron label is set → `ondemand`
+
+**`ondemand` (default)**: The proxy starts the container on the first incoming connection and stops it after the idle timeout expires. This is the standard lazy-start behaviour.
+
+**`cron`**: The container lifecycle is managed entirely by the cron schedule. The proxy does **not** attempt to start the container when a connection arrives — if the container is not running, the connection fails immediately. Use this when you want strict schedule-only control over when the service is available.
+
+**`manual`**: The proxy forwards traffic without ever starting or stopping the container. Use this for containers managed by an external tool (host cron, CI runner, etc.) where the proxy should act purely as a port forwarder.
+
+```yaml
+# Pure passthrough — container is managed externally
+labels:
+  lazy-tcp-proxy.enabled: "true"
+  lazy-tcp-proxy.ports: "5432:5432"
+  lazy-tcp-proxy.availability: "manual"
 ```
 
 ---
