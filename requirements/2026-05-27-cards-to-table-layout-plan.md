@@ -44,9 +44,9 @@
      - Iterate `data` directly (rows are already one-per-port, sorted).
      - For each `snap`, compute the DNS cell by filtering `traefik_hosts` /
        `traefik_tcp_hosts` where the port suffix equals `snap.listen_port`.
-       Always use `http://domain` for `traefik_hosts`;
+       Always use `https://domain` for `traefik_hosts`;
        always use `tcp://domain` for `traefik_tcp_hosts`.
-       `tls_enabled` is not used in the DNS column.
+       Cell is blank when no matching entry exists in either list.
      - Proxy cell: `(snap.has_auth ? '🔒' : '🔓') + ' :' + snap.listen_port +
        (snap.is_udp ? '/udp' : '') + ' [' + snap.availability + ']'`
      - Target cell: status icon + `snap.container_name + ':' + snap.target_port +
@@ -143,7 +143,7 @@ function dnsForPort(snap) {
   for (const h of (snap.traefik_hosts || [])) {
     const idx = h.lastIndexOf(':');
     if (idx < 1 || parseInt(h.substring(idx + 1)) !== port) continue;
-    entries.push('http://' + h.substring(0, idx));
+    entries.push('https://' + h.substring(0, idx));
   }
   for (const h of (snap.traefik_tcp_hosts || [])) {
     const idx = h.lastIndexOf(':');
