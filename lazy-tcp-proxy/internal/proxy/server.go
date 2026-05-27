@@ -47,6 +47,9 @@ type TargetSnapshot struct {
 	LastActiveRelative string     `json:"last_active_relative"`
 	TraefikHosts       []string   `json:"traefik_hosts,omitempty"`
 	TraefikTCPHosts    []string   `json:"traefik_tcp_hosts,omitempty"`
+	IsUDP              bool       `json:"is_udp"`
+	HasAuth            bool       `json:"has_auth"`
+	Availability       string     `json:"availability"`
 }
 
 // relativeTime returns a human-readable string describing how long ago t was,
@@ -302,7 +305,7 @@ func (s *ProxyServer) Snapshot() []TargetSnapshot {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	now := time.Now()
-	out := make([]TargetSnapshot, 0, len(s.targets))
+	out := make([]TargetSnapshot, 0, len(s.targets)+len(s.udpTargets))
 	for listenPort, ts := range s.targets {
 		effective := ts.lastActive
 		if effective.IsZero() {
@@ -324,13 +327,47 @@ func (s *ProxyServer) Snapshot() []TargetSnapshot {
 			LastActiveRelative: relativeTime(effective, now),
 			TraefikHosts:       ts.info.TraefikHosts,
 			TraefikTCPHosts:    ts.info.TraefikTCPHosts,
+			IsUDP:              false,
+			HasAuth:            len(ts.apiKey) > 0 || len(ts.basicAuth) > 0,
+			Availability:       types.EffectiveAvailability(ts.info),
+		})
+	}
+	for listenPort, uls := range s.udpTargets {
+		uls.mu.Lock()
+		lastAct := uls.lastActive
+		uls.mu.Unlock()
+		if lastAct.IsZero() {
+			lastAct = s.startTime
+		}
+		t := lastAct
+		id := uls.info.ContainerID
+		if len(id) > 12 {
+			id = id[:12]
+		}
+		out = append(out, TargetSnapshot{
+			ContainerID:        id,
+			ContainerName:      uls.info.ContainerName,
+			ListenPort:         listenPort,
+			TargetPort:         uls.targetPort,
+			Running:            uls.running,
+			ActiveConns:        uls.activeFlows.Load(),
+			LastActive:         &t,
+			LastActiveRelative: relativeTime(lastAct, now),
+			TraefikHosts:       uls.info.TraefikHosts,
+			TraefikTCPHosts:    uls.info.TraefikTCPHosts,
+			IsUDP:              true,
+			HasAuth:            false,
+			Availability:       types.EffectiveAvailability(uls.info),
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].ContainerName != out[j].ContainerName {
 			return out[i].ContainerName < out[j].ContainerName
 		}
-		return out[i].ContainerID < out[j].ContainerID
+		if out[i].IsUDP != out[j].IsUDP {
+			return !out[i].IsUDP // TCP before UDP
+		}
+		return out[i].ListenPort < out[j].ListenPort
 	})
 	return out
 }
