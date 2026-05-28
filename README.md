@@ -74,8 +74,8 @@ Configure via environment variables:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CONFIG_PATH` | `/etc/lazy-tcp-proxy/config.yaml` | Path to the YAML config file |
-| `ADMIN_PORT` | `8081` | Admin API port (`0` = disabled) |
-| `ADMIN_API_KEY` | *(required)* | API key for the admin API (`GET /config`, `GET /config/reload`, `PUT /config/update`) |
+| `ADMIN_PORT` | `0` | Admin API port (`0` = disabled) |
+| `ADMIN_API_KEY` | *(required if `ADMIN_PORT` > 0)* | API key for the admin API (`GET /config`, `GET /config/reload`, `PUT /config/update`) |
 
 **→ [README_CONFIG.md](README_CONFIG.md)**
 
@@ -91,8 +91,11 @@ Configure via environment variables:
 | `DOCKER_SOCK`         | Path to Docker socket                                              | `/var/run/docker.sock`    |
 | `STATUS_PORT`         | Port for the HTTP status server; set to `0` to disable            | 8080                      |
 | `CONFIG_PATH`         | Path to the dynamic YAML config file (see [README_CONFIG.md](README_CONFIG.md)) | `/etc/lazy-tcp-proxy/config.yaml` |
-| `ADMIN_PORT`          | Port for the admin API; set to `0` to disable (see [README_CONFIG.md](README_CONFIG.md)) | 8081 |
+| `ADMIN_PORT`          | Port for the admin API; set to `0` to disable (see [README_CONFIG.md](README_CONFIG.md)) | `0` (disabled) |
 | `ADMIN_API_KEY`       | API key for the admin API; required when `ADMIN_PORT` > 0          | *(none)*                  |
+| `TRAEFIK_PROXY_HOST`  | Hostname/IP Traefik uses to reach lazy-tcp-proxy's listen ports (used in `/traefik` service URLs) | `lazy-tcp-proxy` |
+| `TRAEFIK_ENTRYPOINT`  | Traefik entry point added to every generated router; set to `""` to omit | `websecure` |
+| `TRAEFIK_CERTRESOLVER` | Cert resolver added to every generated router's `tls.certResolver`; set to `""` to omit | `myresolver` |
 
 All are optional; defaults are safe for most setups.
 
