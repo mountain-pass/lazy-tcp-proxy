@@ -86,4 +86,4 @@
 | REQ-082 | Traefik TCP SNI Routing via `traefik_tcp_hosts`                          | Medium | Completed     | 2026-05-24 | [2026-05-24-traefik-tcp-sni-hosts.md](2026-05-24-traefik-tcp-sni-hosts.md) |
 | REQ-083 | Container Availability Config (`availability`)                           | Medium | Completed     | 2026-05-27 | [2026-05-27-container-availability-config.md](2026-05-27-container-availability-config.md) |
 | REQ-084 | Status Dashboard — Cards to Table Layout                                 | Low    | Completed     | 2026-05-27 | [2026-05-27-cards-to-table-layout.md](2026-05-27-cards-to-table-layout.md) |
-| REQ-085 | WEB_PORT and WEB_HOST Environment Variables                              | Medium | Planned       | 2026-05-28 | [2026-05-28-web-port-and-web-host.md](2026-05-28-web-port-and-web-host.md) |
+| REQ-085 | WEB_PORT and WEB_HOST Environment Variables                              | Medium | In Progress   | 2026-05-28 | [2026-05-28-web-port-and-web-host.md](2026-05-28-web-port-and-web-host.md) |
