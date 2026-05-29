@@ -206,6 +206,7 @@ const statusDashboardHTML = `<!DOCTYPE html>
     }
 
     function statusIcon(snap) {
+      if (snap.container_missing) return '⚠️';
       if (!snap.running) return '🔴';
       return snap.active_conns > 0 ? '🟢' : '🟠';
     }

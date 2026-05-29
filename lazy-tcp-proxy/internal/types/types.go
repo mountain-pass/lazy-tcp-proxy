@@ -83,6 +83,7 @@ type TargetHandler interface {
 	RemoveTarget(containerID string)
 	ContainerStopped(containerID string)
 	ContainerStarted(containerID string)
+	ContainerRemoved(containerID string)
 }
 
 // ParsePortMappings tokenises a comma-separated "<listen>:<target>" string into

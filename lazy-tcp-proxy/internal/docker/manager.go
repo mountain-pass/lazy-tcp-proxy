@@ -1090,7 +1090,7 @@ func (m *Manager) WatchEvents(ctx context.Context, handler types.TargetHandler) 
 						// labels. Keep listeners alive so the target recovers automatically
 						// when the container is recreated (e.g. docker compose up).
 						log.Printf("docker: event: config-only container removed: \033[33m%s\033[0m (kept registered, waiting for restart)", name)
-						handler.ContainerStopped(rid)
+						handler.ContainerRemoved(rid)
 					} else {
 						log.Printf("docker: event: container removed: \033[33m%s\033[0m", name)
 						handler.RemoveTarget(msg.Actor.ID)

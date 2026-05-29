@@ -39,6 +39,7 @@ type udpListenerState struct {
 	idleTimeout  *time.Duration // nil = use server default
 	startTimeout time.Duration  // how long to wait for upstream to respond on cold start
 	running     bool
+	missing     bool
 	removed     bool
 	mu          sync.Mutex
 	flows       map[string]*udpFlow // key: clientAddr.String()

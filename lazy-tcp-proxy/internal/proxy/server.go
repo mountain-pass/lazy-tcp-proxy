@@ -42,6 +42,7 @@ type TargetSnapshot struct {
 	ListenPort         int        `json:"listen_port"`
 	TargetPort         int        `json:"target_port"`
 	Running            bool       `json:"running"`
+	ContainerMissing   bool       `json:"container_missing"`
 	ActiveConns        int32      `json:"active_conns"`
 	LastActive         *time.Time `json:"last_active"`
 	LastActiveRelative string     `json:"last_active_relative"`
@@ -99,6 +100,7 @@ type targetState struct {
 	httpHealthCheck string         // URL to poll for readiness; "" = disabled
 	hasHealthCheck  bool           // true if the container has a Docker HEALTHCHECK configured
 	running         bool
+	missing         bool
 	removed         bool
 	tlsEnabled      bool
 	apiKey          []string
@@ -322,6 +324,7 @@ func (s *ProxyServer) Snapshot() []TargetSnapshot {
 			ListenPort:         listenPort,
 			TargetPort:         ts.targetPort,
 			Running:            ts.running,
+			ContainerMissing:   ts.missing,
 			ActiveConns:        ts.activeConns.Load(),
 			LastActive:         &t,
 			LastActiveRelative: relativeTime(effective, now),
@@ -350,6 +353,7 @@ func (s *ProxyServer) Snapshot() []TargetSnapshot {
 			ListenPort:         listenPort,
 			TargetPort:         uls.targetPort,
 			Running:            uls.running,
+			ContainerMissing:   uls.missing,
 			ActiveConns:        uls.activeFlows.Load(),
 			LastActive:         &t,
 			LastActiveRelative: relativeTime(lastAct, now),
@@ -661,6 +665,37 @@ func (s *ProxyServer) ContainerStopped(containerID string) {
 	}
 }
 
+// ContainerRemoved marks all port mappings for a config-only container as
+// missing (i.e. destroyed by pruning). The listeners are kept so the container
+// recovers automatically when it is recreated.
+func (s *ProxyServer) ContainerRemoved(containerID string) {
+	s.mu.RLock()
+	var affectedULS []*udpListenerState
+	for _, ts := range s.targets {
+		if ts.info.ContainerID == containerID {
+			ts.running = false
+			ts.missing = true
+		}
+	}
+	for _, uls := range s.udpTargets {
+		if uls.info.ContainerID == containerID {
+			uls.running = false
+			uls.missing = true
+			affectedULS = append(affectedULS, uls)
+		}
+	}
+	s.mu.RUnlock()
+	for _, uls := range affectedULS {
+		uls.mu.Lock()
+		uls.upstreamReady = false
+		if uls.upstreamStarting {
+			uls.upstreamStarting = false
+			uls.upstreamReadyCond.Broadcast()
+		}
+		uls.mu.Unlock()
+	}
+}
+
 // ContainerStarted marks all port mappings for the container as running and
 // cascades a start to any declared dependants.
 func (s *ProxyServer) ContainerStarted(containerID string) {
@@ -669,12 +704,14 @@ func (s *ProxyServer) ContainerStarted(containerID string) {
 	for _, ts := range s.targets {
 		if ts.info.ContainerID == containerID {
 			ts.running = true
+			ts.missing = false
 			info = ts.info
 		}
 	}
 	for _, uls := range s.udpTargets {
 		if uls.info.ContainerID == containerID {
 			uls.running = true
+			uls.missing = false
 		}
 	}
 	s.mu.Unlock()

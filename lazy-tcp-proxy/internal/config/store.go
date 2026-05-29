@@ -302,9 +302,10 @@ func (c *TargetCollector) RegisterTarget(info types.TargetInfo) {
 	c.targets = append(c.targets, info)
 	c.mu.Unlock()
 }
-func (c *TargetCollector) RemoveTarget(_ string)      {}
-func (c *TargetCollector) ContainerStopped(_ string)  {}
-func (c *TargetCollector) ContainerStarted(_ string)  {}
+func (c *TargetCollector) RemoveTarget(_ string)       {}
+func (c *TargetCollector) ContainerStopped(_ string)   {}
+func (c *TargetCollector) ContainerStarted(_ string)   {}
+func (c *TargetCollector) ContainerRemoved(_ string)   {}
 
 // Targets returns a copy of all collected targets.
 func (c *TargetCollector) Targets() []types.TargetInfo {
