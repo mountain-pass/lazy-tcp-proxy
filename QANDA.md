@@ -20,7 +20,7 @@
 
 ### Is there any way to see what containers are managed?
 
-> Yes! The logs, and the new http://localhost:8080/status HTTP endpoint (`STATUS_PORT` environment variable).
+> Yes! The logs, and the new http://localhost:8080/metrics HTTP endpoint (`WEB_PORT` environment variable).
 
 ### What happens when there aren't enough resources?
 

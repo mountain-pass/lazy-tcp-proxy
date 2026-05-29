@@ -56,7 +56,7 @@ spec:
               memory: "64Mi"
               cpu: "200m"
 ---
-# Expose the status endpoint inside the cluster.
+# Expose the metrics endpoint inside the cluster.
 apiVersion: v1
 kind: Service
 metadata:

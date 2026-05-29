@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -304,9 +305,9 @@ const statusDashboardHTML = `<!DOCTYPE html>
 
     async function refresh() {
       try {
-        const res = await fetch('/status');
+        const res = await fetch('/metrics');
         if (!res.ok) throw new Error('HTTP ' + res.status);
-        render(await res.json());
+        render((await res.json()).services);
         document.getElementById('error').textContent = '';
       } catch (e) {
         document.getElementById('error').textContent = 'Failed to fetch status: ' + e.message;
@@ -323,11 +324,17 @@ const statusDashboardHTML = `<!DOCTYPE html>
 
 func runStatusServer(ctx context.Context, srv *proxy.ProxyServer, port int, traefikProxyHost, traefikEntryPoint, traefikCertResolver, webHost string, webPort int) {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
+		var ms runtime.MemStats
+		runtime.ReadMemStats(&ms)
 		w.Header().Set("Content-Type", "application/json")
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
-		enc.Encode(srv.Snapshot()) //nolint:errcheck
+		enc.Encode(map[string]any{ //nolint:errcheck
+			"services":     srv.Snapshot(),
+			"memory_used":  ms.Alloc,
+			"memory_total": ms.Sys,
+		})
 	})
 	mux.HandleFunc("/traefik", func(w http.ResponseWriter, r *http.Request) {
 		raw := srv.Snapshot()

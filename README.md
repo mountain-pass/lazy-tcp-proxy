@@ -89,7 +89,7 @@ Configure via environment variables:
 | `START_TIMEOUT_SECS`  | How long (in seconds) to wait for an upstream to be ready after a cold start — applies to the UDP datagram readiness probe, the HTTP health check (`lazy-tcp-proxy.http-healthcheck`), and the Docker HEALTHCHECK readiness gate. If the timeout is reached the connection/flow is dropped. Override per-container with the `lazy-tcp-proxy.start-timeout-secs` label | 30 |
 | `POLL_INTERVAL_SECS`  | How often (in seconds) to check for idle containers                | 15                        |
 | `DOCKER_SOCK`         | Path to Docker socket                                              | `/var/run/docker.sock`    |
-| `WEB_PORT`            | Port for the HTTP web server (dashboard, `/status`, `/traefik`, `/health`); set to `0` to disable. `STATUS_PORT` is accepted as a legacy alias | 8080 |
+| `WEB_PORT`            | Port for the HTTP web server (dashboard, `/metrics`, `/traefik`, `/health`); set to `0` to disable. `STATUS_PORT` is accepted as a legacy alias | 8080 |
 | `WEB_HOST`            | When set, exposes lazy-tcp-proxy's web endpoint via Traefik: adds `Host('<WEB_HOST>') → http://<TRAEFIK_PROXY_HOST>:<WEB_PORT>` to `/traefik`. Unset = no Traefik route for the web endpoint | *(none)* |
 | `STATUS_PORT`         | Legacy alias for `WEB_PORT`; ignored when `WEB_PORT` is set       | 8080                      |
 | `CONFIG_PATH`         | Path to the dynamic YAML config file (see [README_CONFIG.md](README_CONFIG.md)) | `/etc/lazy-tcp-proxy/config.yaml` |
@@ -104,47 +104,55 @@ All are optional; defaults are safe for most setups.
 
 ---
 
-## Status Endpoint
+## Metrics Endpoint
 
 The proxy exposes a lightweight HTTP server for operational visibility.
 
-### `GET /status`
+### `GET /metrics`
 
-Returns a JSON array of all currently managed containers and their state, sorted alphabetically by container name (then by container ID as a tie-breaker).
+Returns a JSON object containing all currently managed containers and their state, plus process memory usage.
+
+`services` is sorted alphabetically by container name (then by container ID as a tie-breaker).
 
 `last_active` shows when a container last handled traffic (falling back to the proxy start time if it has never been used). `last_active_relative` shows the same information in human-readable form, making it easy to spot long-idle containers at a glance — handy for identifying decommissioning candidates.
 
 `container_missing` is `true` when a config-only container has been removed from Docker (e.g. by `docker system prune`) but is still registered in the proxy. The status dashboard shows ⚠️ for missing containers instead of 🔴 (stopped). The flag clears automatically when the container is recreated.
 
+`memory_used` is heap bytes currently in use; `memory_total` is total bytes mapped from the OS.
+
 ```sh
-curl http://localhost:8080/status
+curl http://localhost:8080/metrics
 ```
 
 ```json
-[
-  {
-    "container_id": "b2c3d4e5f6a1",
-    "container_name": "idle-service",
-    "listen_port": 9001,
-    "target_port": 8080,
-    "running": false,
-    "container_missing": false,
-    "active_conns": 0,
-    "last_active": "2026-04-01T08:00:00Z",
-    "last_active_relative": "3 days ago"
-  },
-  {
-    "container_id": "a1b2c3d4e5f6",
-    "container_name": "my-service",
-    "listen_port": 9000,
-    "target_port": 80,
-    "running": true,
-    "container_missing": false,
-    "active_conns": 1,
-    "last_active": "2026-04-01T12:34:56Z",
-    "last_active_relative": "8 hours ago"
-  }
-]
+{
+  "memory_total": 14688256,
+  "memory_used": 3421872,
+  "services": [
+    {
+      "container_id": "b2c3d4e5f6a1",
+      "container_name": "idle-service",
+      "listen_port": 9001,
+      "target_port": 8080,
+      "running": false,
+      "container_missing": false,
+      "active_conns": 0,
+      "last_active": "2026-04-01T08:00:00Z",
+      "last_active_relative": "3 days ago"
+    },
+    {
+      "container_id": "a1b2c3d4e5f6",
+      "container_name": "my-service",
+      "listen_port": 9000,
+      "target_port": 80,
+      "running": true,
+      "container_missing": false,
+      "active_conns": 1,
+      "last_active": "2026-04-01T12:34:56Z",
+      "last_active_relative": "8 hours ago"
+    }
+  ]
+}
 ```
 
 ### `GET /health`

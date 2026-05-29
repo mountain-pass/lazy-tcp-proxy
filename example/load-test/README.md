@@ -92,7 +92,7 @@ While the test is running, poll the status endpoint to confirm the iperf3 contai
 running and traffic is flowing:
 
 ```sh
-watch -n2 'curl -s http://localhost:8080/status | python3 -m json.tool'
+watch -n2 'curl -s http://localhost:8080/metrics | python3 -m json.tool'
 ```
 
 ## Proxy logs
