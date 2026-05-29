@@ -105,12 +105,14 @@ func sanitiseName(s string) string {
 // BuildConfig builds a Traefik HTTP provider config from a slice of per-listen-port
 // snapshots. proxyHost is the hostname Traefik uses to reach lazy-tcp-proxy.
 // entryPoint and certResolver are applied to every emitted router when non-empty.
+// When webHost is non-empty, an additional HTTP router+service is emitted that routes
+// Host(`webHost`) → http://proxyHost:webPort (exposing the lazy-tcp-proxy web endpoint).
 //
 // HTTP section: one router+service per TraefikHosts entry whose port matches ListenPort.
 // TCP section:  one router+service per TraefikTCPHosts entry whose port matches ListenPort,
 //
 //	using HostSNI rule on the configured entrypoint.
-func BuildConfig(snapshots []Snapshot, proxyHost, entryPoint, certResolver string) TraefikConfig {
+func BuildConfig(snapshots []Snapshot, proxyHost, entryPoint, certResolver, webHost string, webPort int) TraefikConfig {
 	httpRouters := make(map[string]HTTPRouter)
 	httpServices := make(map[string]HTTPService)
 	tcpRouters := make(map[string]TCPRouter)
@@ -177,6 +179,26 @@ func BuildConfig(snapshots []Snapshot, proxyHost, entryPoint, certResolver strin
 					Servers: []TCPServer{{Address: fmt.Sprintf("%s:%d", proxyHost, port)}},
 				},
 			}
+		}
+	}
+
+	if webHost != "" {
+		name := sanitiseName(fmt.Sprintf("%s-%d", webHost, webPort))
+		router := HTTPRouter{
+			Rule:    fmt.Sprintf("Host(`%s`)", webHost),
+			Service: name + "-service",
+		}
+		if entryPoint != "" {
+			router.EntryPoints = []string{entryPoint}
+		}
+		if certResolver != "" {
+			router.TLS = &RouterTLS{CertResolver: certResolver}
+		}
+		httpRouters[name+"-router"] = router
+		httpServices[name+"-service"] = HTTPService{
+			LoadBalancer: LoadBalancer{
+				Servers: []Server{{URL: fmt.Sprintf("http://%s:%d", proxyHost, webPort)}},
+			},
 		}
 	}
 
