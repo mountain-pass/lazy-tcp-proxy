@@ -1309,7 +1309,6 @@ func (s *ProxyServer) handleHTTPProxy(client, upstream net.Conn, ts *targetState
 			return sentCW.n, recvCW.n
 		}
 	}
-	return sentCW.n, recvCW.n
 }
 
 // cascadeStart starts all registered dependants of upstream.
