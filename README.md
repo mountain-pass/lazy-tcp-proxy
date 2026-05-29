@@ -113,6 +113,8 @@ Returns a JSON array of all currently managed containers and their state, sorted
 
 `last_active` shows when a container last handled traffic (falling back to the proxy start time if it has never been used). `last_active_relative` shows the same information in human-readable form, making it easy to spot long-idle containers at a glance — handy for identifying decommissioning candidates.
 
+`container_missing` is `true` when a config-only container has been removed from Docker (e.g. by `docker system prune`) but is still registered in the proxy. The status dashboard shows ⚠️ for missing containers instead of 🔴 (stopped). The flag clears automatically when the container is recreated.
+
 ```sh
 curl http://localhost:8080/status
 ```
@@ -125,6 +127,7 @@ curl http://localhost:8080/status
     "listen_port": 9001,
     "target_port": 8080,
     "running": false,
+    "container_missing": false,
     "active_conns": 0,
     "last_active": "2026-04-01T08:00:00Z",
     "last_active_relative": "3 days ago"
@@ -135,6 +138,7 @@ curl http://localhost:8080/status
     "listen_port": 9000,
     "target_port": 80,
     "running": true,
+    "container_missing": false,
     "active_conns": 1,
     "last_active": "2026-04-01T12:34:56Z",
     "last_active_relative": "8 hours ago"
@@ -162,6 +166,18 @@ This should be core functionality in the docker engine. As such, I've raised a F
 ## Questions and Answers
 
 [Can be found here.](QANDA.md)
+
+---
+
+## Caveats
+
+### `docker system prune` removes stopped containers
+
+`docker system prune` removes **all stopped containers** by default, not just unused images and build cache. Because `lazy-tcp-proxy` stops idle containers to save resources, your managed containers will almost certainly be stopped at the time you run the command — and will be permanently deleted.
+
+> **Warning:** Do not run `docker system prune` (or `docker container prune`) on a host running `lazy-tcp-proxy` unless you intend to remove your managed containers.
+
+If a config-only container (one registered via `config.yaml` rather than Docker labels) is removed this way, the proxy keeps its listener alive and waits for the container to be recreated. The status dashboard will show ⚠️ next to the container name until it comes back online. Run `docker compose up` (or equivalent) to recreate it.
 
 ---
 
