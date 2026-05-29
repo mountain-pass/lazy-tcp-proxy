@@ -30,6 +30,21 @@ There is no mechanism to enable or disable metrics gathering at runtime. A Postg
 - Metrics on/off state is a single boolean (or nil pointer to a metrics struct) checked before any metrics write — no locking overhead on the hot path.
 - Follow the existing env-var pattern in `main.go` (read via `os.Getenv`, log via the structured logger).
 
+### Rollup schedule
+
+- A dedicated goroutine fires a `time.NewTicker(1 * time.Minute)` rollup loop.
+- On each tick, connection counters are read via atomic operations (lock-free, non-blocking on the hot path).
+- The PostgreSQL write is dispatched as a fire-and-forget goroutine so the ticker is never delayed by a slow write.
+- Each write uses `context.WithTimeout` of **15 seconds**.
+
+### Write failure handling
+
+- Failed snapshots are held in an in-memory ring buffer capped at **5 entries** (oldest dropped when the buffer is full).
+- Each snapshot retains its original `rollup_at` timestamp.
+- On the next tick, the retry buffer is flushed first: each buffered snapshot is written as a **separate database record** (preserving the original timestamp), followed by the current snapshot. This ensures graphs remain correctly time-stamped and are never skewed by aggregation.
+- On successful flush of a buffered snapshot, it is discarded from the buffer.
+- On failure, a `WARN` log line is emitted: `metrics write failed (buffered N/5): <error>`.
+
 ## Acceptance Criteria
 
 - [ ] `METRICS_POSTGRES_URL` unset → startup log line: `metrics disabled (METRICS_POSTGRES_URL not set)`
@@ -37,6 +52,11 @@ There is no mechanism to enable or disable metrics gathering at runtime. A Postg
 - [ ] `METRICS_POSTGRES_URL` set to a malformed value → startup log line: `metrics disabled (invalid METRICS_POSTGRES_URL: <error>)` and proxy starts normally
 - [ ] No functional regression in proxy behaviour when metrics are disabled
 - [ ] Credentials never appear in any log output
+- [ ] Rollup ticker fires every 1 minute and does not block the proxy hot path
+- [ ] DB write timeout is 15 seconds
+- [ ] Up to 5 failed snapshots are retained in the retry buffer; the 6th pushes out the oldest
+- [ ] On recovery, each buffered snapshot is written as a separate record with its original `rollup_at` timestamp
+- [ ] Write failure emits a WARN log: `metrics write failed (buffered N/5): <error>`
 
 ## Dependencies
 
