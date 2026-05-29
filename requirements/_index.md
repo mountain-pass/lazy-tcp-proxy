@@ -90,3 +90,4 @@
 | REQ-086 | Status Dashboard — ⚠️ Icon for Missing/Removed Containers               | Medium | Completed     | 2026-05-29 | [2026-05-29-missing-container-warning-icon.md](2026-05-29-missing-container-warning-icon.md) |
 | REQ-087 | README Warning: `docker system prune` Removes Stopped Containers         | Medium | Completed     | 2026-05-29 | [2026-05-29-readme-docker-system-prune-warning.md](2026-05-29-readme-docker-system-prune-warning.md) |
 | REQ-088 | Compose Re-provision on Missing Container                                | Medium | Completed     | 2026-05-29 | [2026-05-29-compose-reprovision-on-missing.md](2026-05-29-compose-reprovision-on-missing.md) |
+| REQ-089 | Dashboard Compose & Image Archive Indicators                             | Low    | Planned       | 2026-05-29 | [2026-05-29-dashboard-compose-indicators.md](2026-05-29-dashboard-compose-indicators.md) |
