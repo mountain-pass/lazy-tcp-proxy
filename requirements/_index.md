@@ -95,3 +95,4 @@
 | REQ-091 | Fix: CVE Dependency Updates (x/crypto, x/net, grpc, docker/docker)      | High   | Completed     | 2026-05-29 | [2026-05-29-fix-cves-dependency-updates.md](2026-05-29-fix-cves-dependency-updates.md) |
 | REQ-092 | Fix: CVE Dependency Updates — Batch 2 (buildkit, containerd, spdystream, docker/cli, in-toto, otel-otlptrace) | High | Completed | 2026-05-29 | [2026-05-29-fix-cves-dependency-updates-2.md](2026-05-29-fix-cves-dependency-updates-2.md) |
 | REQ-093 | Fix: CVE Dependency Updates — Batch 3 (otel-otlpmetric; 8 CVEs blocked by compose/buildx constraint) | High | Completed | 2026-05-29 | [2026-05-29-fix-cves-dependency-updates-3.md](2026-05-29-fix-cves-dependency-updates-3.md) |
+| REQ-094 | Metrics PostgreSQL URL Environment Variable                              | Medium | Completed     | 2026-05-29 | [2026-05-29-metrics-postgres-url-env-var.md](2026-05-29-metrics-postgres-url-env-var.md) |
