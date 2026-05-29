@@ -350,10 +350,11 @@ type backendManager interface {
 	// targets that are not discovered via Docker labels. No-op on Kubernetes.
 	JoinNetworksForContainerNames(ctx context.Context, names []string)
 	// InspectRunning reports whether the container/service identified by targetID
-	// is currently running. Used to populate the Running field for YAML-only
-	// targets that were not discovered via backend labels. Returns (false, nil)
-	// on backends where this is not applicable (e.g. Kubernetes).
-	InspectRunning(ctx context.Context, targetID string) (bool, error)
+	// is currently running and whether it exists at all. Used to populate the
+	// Running and Missing fields for YAML-only targets not discovered via backend
+	// labels. Returns (false, true, nil) on backends where this is not applicable
+	// (e.g. Kubernetes). Returns (false, false, nil) when the container is absent.
+	InspectRunning(ctx context.Context, targetID string) (running, exists bool, err error)
 	// SetConfigOnlyNames registers the name→registeredContainerID mapping for
 	// containers that are managed via config.yaml only (no backend label).
 	// The Docker backend uses this so WatchEvents can route start/stop events
@@ -389,11 +390,15 @@ func discoverAndApply(ctx context.Context, mgr backendManager, store *config.Sto
 	configOnlyNameToID := make(map[string]string)
 	for i, t := range merged {
 		if !discoveredIDSet[t.ContainerID] {
-			running, err := mgr.InspectRunning(ctx, t.ContainerID)
+			running, exists, err := mgr.InspectRunning(ctx, t.ContainerID)
 			if err != nil {
 				log.Printf("config: could not inspect running state for %q: %v", t.ContainerName, err)
 			} else {
 				merged[i].Running = running
+				merged[i].Missing = !exists
+				if !exists {
+					log.Printf("config: container \033[33m%s\033[0m not found — marking as missing", t.ContainerName)
+				}
 			}
 			configOnlyNameToID[t.ContainerName] = t.ContainerID
 		}

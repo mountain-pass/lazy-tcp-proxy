@@ -440,6 +440,7 @@ func (s *ProxyServer) RegisterTarget(info types.TargetInfo) {
 			existing.httpHealthCheck = info.HTTPHealthCheck
 			existing.hasHealthCheck = info.HasHealthCheck
 			existing.running = info.Running
+			existing.missing = info.Missing
 			existing.removed = false
 			existing.tlsEnabled = info.TLS
 			existing.apiKey = info.APIKey
@@ -473,6 +474,7 @@ func (s *ProxyServer) RegisterTarget(info types.TargetInfo) {
 			httpHealthCheck: info.HTTPHealthCheck,
 			hasHealthCheck:  info.HasHealthCheck,
 			running:         info.Running,
+			missing:         info.Missing,
 			tlsEnabled:      info.TLS,
 			apiKey:          info.APIKey,
 			basicAuth:       info.BasicAuth,
@@ -490,6 +492,7 @@ func (s *ProxyServer) RegisterTarget(info types.TargetInfo) {
 			existing.idleTimeout = info.IdleTimeout
 			existing.startTimeout = effectiveTimeout(info.StartTimeout, s.startTimeout)
 			existing.running = info.Running
+			existing.missing = info.Missing
 			existing.removed = false
 			log.Printf("proxy: updated UDP target \033[33m%s\033[0m on port %d->%d", info.ContainerName, m.ListenPort, m.TargetPort)
 			continue
@@ -507,6 +510,7 @@ func (s *ProxyServer) RegisterTarget(info types.TargetInfo) {
 			idleTimeout:  info.IdleTimeout,
 			startTimeout: effectiveTimeout(info.StartTimeout, s.startTimeout),
 			running:      info.Running,
+			missing:      info.Missing,
 			flows:        make(map[string]*udpFlow),
 			pending:      make(map[string]bool),
 		}

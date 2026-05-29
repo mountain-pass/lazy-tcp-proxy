@@ -34,6 +34,7 @@ type TargetInfo struct {
 	IdleTimeout   *time.Duration // nil = use global default; non-nil (incl. 0) = per-container override
 	StartTimeout  *time.Duration // nil = use global default; non-nil = per-container override
 	Running       bool           // true if the target was running at time of inspection
+	Missing       bool           // true if the container does not exist (e.g. pruned before proxy started)
 	WebhookURL    string         // empty = no webhook
 	Dependants    []string       // names of managed targets to start/stop alongside this one
 	CronStart       string         // 5-field cron expression; "" = not scheduled
