@@ -2,7 +2,7 @@
 
 **Requirement**: [2026-05-29-dashboard-compose-indicators.md](2026-05-29-dashboard-compose-indicators.md)
 **Date**: 2026-05-29
-**Status**: Draft
+**Status**: Implemented
 
 ---
 

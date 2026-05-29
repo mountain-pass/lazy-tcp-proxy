@@ -214,9 +214,20 @@ const statusDashboardHTML = `<!DOCTYPE html>
     }
 
     function statusIcon(snap) {
-      if (snap.container_missing) return '⚠️';
-      if (!snap.running) return '🔴';
-      return snap.active_conns > 0 ? '🟢' : '🟠';
+      if (snap.container_missing) return '<span title="Container missing">⚠️</span>';
+      if (!snap.running)          return '<span title="Container stopped">🔴</span>';
+      return snap.active_conns > 0
+        ? '<span title="Container running">🟢</span>'
+        : '<span title="Container idle">🟠</span>';
+    }
+
+    function composeIcons(snap) {
+      const recycleTitle = snap.has_compose_file ? 'Compose file found' : 'No compose file';
+      const boxTitle     = snap.has_tar_gz       ? 'Docker image tar found' : 'No docker image tar';
+      const recycleStyle = snap.has_compose_file ? '' : ' style="opacity:0.25"';
+      const boxStyle     = snap.has_tar_gz       ? '' : ' style="opacity:0.25"';
+      return '<span title="' + recycleTitle + '"' + recycleStyle + '>♻️</span>' +
+             '<span title="' + boxTitle     + '"' + boxStyle     + '>📦</span>';
     }
 
     function dnsForPort(snap) {
@@ -256,7 +267,7 @@ const statusDashboardHTML = `<!DOCTYPE html>
         const proxyCell = (snap.has_auth ? '🔒' : '🔓') +
           ' :' + snap.listen_port + udp +
           ' [' + esc(snap.availability) + ']';
-        const targetCell = statusIcon(snap) +
+        const targetCell = statusIcon(snap) + composeIcons(snap) +
           ' ' + esc(snap.container_name) + ':' + snap.target_port + udp;
         html +=
           '<tr>' +
@@ -502,6 +513,7 @@ func main() {
 	configPath := resolveConfigPath()
 	composeDir := resolveComposeDir(configPath)
 	mgr.SetComposeDir(composeDir)
+	srv.SetComposeDir(composeDir)
 	log.Printf("compose dir: %s (set COMPOSE_DIR to override)", composeDir)
 	store := config.New(configPath)
 	if err := store.Load(); err != nil {
