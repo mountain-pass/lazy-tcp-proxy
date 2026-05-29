@@ -15,6 +15,8 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"reflect"
 	"runtime/debug"
 	"sort"
@@ -52,6 +54,8 @@ type TargetSnapshot struct {
 	IsUDP              bool       `json:"is_udp"`
 	HasAuth            bool       `json:"has_auth"`
 	Availability       string     `json:"availability"`
+	HasComposeFile     bool       `json:"has_compose_file"`
+	HasTarGz           bool       `json:"has_tar_gz"`
 }
 
 // relativeTime returns a human-readable string describing how long ago t was,
@@ -168,6 +172,28 @@ type ProxyServer struct {
 	startGroup    singleflight.Group // deduplicates concurrent EnsureRunning calls per container
 	tlsConfig     *tls.Config        // shared self-signed cert; nil if cert generation failed
 	collector     *metrics.Collector // nil if metrics are disabled
+	composeDir    string             // directory scanned for compose files and image archives
+}
+
+// SetComposeDir sets the compose directory used to populate HasComposeFile and HasTarGz
+// in status snapshots. An empty string disables the file checks.
+func (s *ProxyServer) SetComposeDir(dir string) { s.composeDir = dir }
+
+// composeFlags checks whether a compose file and/or image archive exist for name.
+func (s *ProxyServer) composeFlags(name string) (hasCompose, hasTar bool) {
+	if s.composeDir == "" {
+		return false, false
+	}
+	for _, ext := range []string{".yml", ".yaml"} {
+		if _, err := os.Stat(filepath.Join(s.composeDir, name+ext)); err == nil {
+			hasCompose = true
+			break
+		}
+	}
+	if _, err := os.Stat(filepath.Join(s.composeDir, name+".tar.gz")); err == nil {
+		hasTar = true
+	}
+	return
 }
 
 // NewServer creates a new ProxyServer backed by the given backend.
@@ -354,6 +380,7 @@ func (s *ProxyServer) Snapshot() []TargetSnapshot {
 		if len(id) > 12 {
 			id = id[:12]
 		}
+		hasCompose, hasTar := s.composeFlags(ts.info.ContainerName)
 		out = append(out, TargetSnapshot{
 			ContainerID:        id,
 			ContainerName:      ts.info.ContainerName,
@@ -369,6 +396,8 @@ func (s *ProxyServer) Snapshot() []TargetSnapshot {
 			IsUDP:              false,
 			HasAuth:            len(ts.apiKey) > 0 || len(ts.basicAuth) > 0,
 			Availability:       types.EffectiveAvailability(ts.info),
+			HasComposeFile:     hasCompose,
+			HasTarGz:           hasTar,
 		})
 	}
 	for listenPort, uls := range s.udpTargets {
@@ -383,6 +412,7 @@ func (s *ProxyServer) Snapshot() []TargetSnapshot {
 		if len(id) > 12 {
 			id = id[:12]
 		}
+		hasCompose, hasTar := s.composeFlags(uls.info.ContainerName)
 		out = append(out, TargetSnapshot{
 			ContainerID:        id,
 			ContainerName:      uls.info.ContainerName,
@@ -398,6 +428,8 @@ func (s *ProxyServer) Snapshot() []TargetSnapshot {
 			IsUDP:              true,
 			HasAuth:            false,
 			Availability:       types.EffectiveAvailability(uls.info),
+			HasComposeFile:     hasCompose,
+			HasTarGz:           hasTar,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {
