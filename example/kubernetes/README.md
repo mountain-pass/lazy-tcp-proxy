@@ -7,7 +7,7 @@ This example runs lazy-tcp-proxy inside a Kubernetes cluster alongside an nginx 
 | Resource | Namespace | Purpose |
 |----------|-----------|---------|
 | `lazy-tcp-proxy` Deployment | `lazy-tcp-proxy` | The proxy itself |
-| `lazy-tcp-proxy` Service | `lazy-tcp-proxy` | Exposes the status endpoint (port 8080) |
+| `lazy-tcp-proxy` Service | `lazy-tcp-proxy` | Exposes the metrics endpoint (port 8080) |
 | `lazy-tcp-proxy` ServiceAccount + ClusterRole | `lazy-tcp-proxy` | RBAC to list/watch/scale Deployments |
 | `example-app` Deployment (nginx) | `default` | Target service, starts at 0 replicas |
 | `example-app` Service | `default` | Lets the proxy reach nginx by DNS |
@@ -57,7 +57,7 @@ Leave this running in a terminal. Open a second terminal for the commands below.
 Check the status — `example-app` should show `running: false` and 0 replicas:
 
 ```bash
-curl -s http://localhost:8080/status | python3 -m json.tool
+curl -s http://localhost:8080/metrics | python3 -m json.tool
 ```
 
 Also confirm the example-app Deployment is at zero replicas:
@@ -101,7 +101,7 @@ kubectl get deployment example-app -n default -w
 
 **Status endpoint** — poll to observe running state:
 ```bash
-watch -n2 'curl -s http://localhost:8080/status | python3 -m json.tool'
+watch -n2 'curl -s http://localhost:8080/metrics | python3 -m json.tool'
 ```
 
 The `running` field flips from `false` → `true` once the pod is ready. After 5 minutes of no requests it flips back to `false` and the Deployment scales to 0.

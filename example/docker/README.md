@@ -30,7 +30,7 @@ The proxy starts immediately. All target containers remain stopped until first u
 Check the proxy status (all services should show `running: false`):
 
 ```bash
-curl -s http://localhost:8080/status | python3 -m json.tool
+curl -s http://localhost:8080/metrics | python3 -m json.tool
 ```
 
 ## Trigger on-demand scaling (0 → 1)
@@ -87,7 +87,7 @@ docker: stopping container whoami (idle timeout)
 
 **Status endpoint** — poll to observe running state change:
 ```bash
-watch -n2 'curl -s http://localhost:8080/status | python3 -m json.tool'
+watch -n2 'curl -s http://localhost:8080/metrics | python3 -m json.tool'
 ```
 
 The `running` field flips from `false` → `true` on first connection and back to `false` after the idle timeout.

@@ -91,7 +91,7 @@ To set this on an existing Unraid container:
 Once lazy-tcp-proxy is running, open a browser or run:
 
 ```bash
-curl http://<unraid-ip>:8080/status
+curl http://<unraid-ip>:8080/metrics
 ```
 
 All managed containers that are currently stopped will show `"running": false`. They will start automatically when a connection arrives on their proxied port.

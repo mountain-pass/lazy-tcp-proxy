@@ -22,7 +22,7 @@ Configuration is stored in a YAML file on disk. Changes are applied by calling
 | `CONFIG_PATH` | `/etc/lazy-tcp-proxy/config.yaml` | Path to the YAML config file |
 | `ADMIN_PORT` | `0` | Port for the admin API server. Set to `0` to disable (default) |
 | `ADMIN_API_KEY` | *(required if `ADMIN_PORT` > 0)* | API key for authenticating admin API requests |
-| `WEB_PORT` | `8080` | Port for the HTTP web server (dashboard, `/status`, `/traefik`, `/health`); `STATUS_PORT` is a legacy alias |
+| `WEB_PORT` | `8080` | Port for the HTTP web server (dashboard, `/metrics`, `/traefik`, `/health`); `STATUS_PORT` is a legacy alias |
 | `WEB_HOST` | *(none)* | When set, adds `Host('<WEB_HOST>') → http://<TRAEFIK_PROXY_HOST>:<WEB_PORT>` to `/traefik`, exposing the web endpoint via Traefik |
 | `TRAEFIK_PROXY_HOST` | `lazy-tcp-proxy` | Hostname/IP Traefik uses to reach lazy-tcp-proxy's listen ports (see [Traefik Integration](README_LABELS.md#traefik-integration)) |
 | `TRAEFIK_ENTRYPOINT` | `websecure` | Traefik entry point name added to every generated router's `entryPoints`; set to `""` to omit |
