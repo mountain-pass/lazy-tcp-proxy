@@ -98,6 +98,7 @@ Configure via environment variables:
 | `TRAEFIK_PROXY_HOST`  | Hostname/IP Traefik uses to reach lazy-tcp-proxy's listen ports (used in `/traefik` service URLs) | `lazy-tcp-proxy` |
 | `TRAEFIK_ENTRYPOINT`  | Traefik entry point added to every generated router; set to `""` to omit | `websecure` |
 | `TRAEFIK_CERTRESOLVER` | Cert resolver added to every generated router's `tls.certResolver`; set to `""` to omit | `myresolver` |
+| `COMPOSE_DIR`         | Directory scanned for compose files and image archives when re-provisioning a missing container (see [Compose Re-provisioning](#compose-re-provisioning)) | `<dir of CONFIG_PATH>/compose` |
 
 All are optional; defaults are safe for most setups.
 
@@ -177,7 +178,73 @@ This should be core functionality in the docker engine. As such, I've raised a F
 
 > **Warning:** Do not run `docker system prune` (or `docker container prune`) on a host running `lazy-tcp-proxy` unless you intend to remove your managed containers.
 
-If a config-only container (one registered via `config.yaml` rather than Docker labels) is removed this way, the proxy keeps its listener alive and waits for the container to be recreated. The status dashboard will show ⚠️ next to the container name until it comes back online. Run `docker compose up` (or equivalent) to recreate it.
+If a config-only container (one registered via `config.yaml` rather than Docker labels) is removed this way, the proxy keeps its listener alive and waits for the container to be recreated. The status dashboard will show ⚠️ next to the container name until it comes back online. Run `docker compose up` (or equivalent) to recreate it — or let the proxy re-provision it automatically using [Compose Re-provisioning](#compose-re-provisioning).
+
+---
+
+## Compose Re-provisioning
+
+When a config-only container is missing and a connection arrives, the proxy can re-provision it automatically using a Docker Compose file you place in the compose directory (default: `/etc/lazy-tcp-proxy/compose/`).
+
+### Convention
+
+For each service you want auto-provisioned, drop one or two files in the compose directory:
+
+| File | Purpose |
+|------|---------|
+| `<name>.yml` or `<name>.yaml` | Docker Compose file for the service |
+| `<name>.tar.gz` | *(optional)* Custom image archive, loaded before `compose up` |
+
+**Example** — for a service named `minio`:
+
+```
+/etc/lazy-tcp-proxy/compose/
+  minio.yml        # required
+  minio.tar.gz     # optional — for offline/custom images
+```
+
+### How it works
+
+When a connection arrives and the container is missing, the proxy:
+
+1. Looks for `<name>.yml` (then `<name>.yaml`) in the compose directory.
+2. If a matching `<name>.tar.gz` archive also exists, loads it into Docker first (equivalent of `docker load -i minio.tar.gz`).
+3. Runs `docker compose up -d` using the compose file.
+4. Once the container starts, `WatchEvents` automatically clears the `missing` flag and begins proxying traffic.
+
+If no compose file is found, the proxy returns an error as before — no change in behaviour.
+
+### Compose file requirements
+
+The compose file must specify `container_name` matching the registered service name so the proxy can find the container after it starts:
+
+```yaml
+services:
+  minio:
+    image: minio/minio:latest
+    container_name: minio          # must match the name in config.yaml
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio-data:/data
+
+volumes:
+  minio-data:
+```
+
+> **Note:** Do not add `lazy-tcp-proxy.enabled=true` labels to containers in these compose files. The proxy already manages them via `config.yaml`; adding the label would create duplicate registrations.
+
+### Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `COMPOSE_DIR` | `<dir of CONFIG_PATH>/compose` | Directory scanned for compose files and image archives |
+
+Mount the directory into the proxy container:
+
+```yaml
+volumes:
+  - /path/to/compose-files:/etc/lazy-tcp-proxy/compose
+```
 
 ---
 
@@ -199,6 +266,7 @@ If a config-only container (one registered via `config.yaml` rather than Docker 
 - **Dependency cascade:** Automatically start/stop related containers together.
 - **HTTP health check:** Poll a URL after cold start before forwarding TCP traffic.
 - **Docker HEALTHCHECK gate:** Automatically waits for containers with a `HEALTHCHECK` to become healthy before forwarding.
+- **Compose re-provisioning:** Automatically recreates a missing container via a Docker Compose file when a connection arrives. Supports loading a custom image archive (`.tar.gz`) before running compose up.
 - **Structured, colorized logs:** Container names in yellow, network names in green, source addresses in cyan for easy scanning.
 
 ---

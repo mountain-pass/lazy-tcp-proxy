@@ -31,7 +31,12 @@ type Manager struct {
 	swarmServices map[string]int    // serviceID → desiredReplicas
 	configOnlyMu  sync.RWMutex
 	configOnlyIDs map[string]string // container name → registered ContainerID (config-only targets)
+	composeDir    string            // directory scanned for compose files and image archives
 }
+
+// SetComposeDir sets the directory in which compose files and image archives are looked up
+// when re-provisioning a missing container. An empty string disables re-provisioning.
+func (m *Manager) SetComposeDir(dir string) { m.composeDir = dir }
 
 // NewManager creates a new Manager. The Docker socket path can be set via
 // DOCKER_SOCK (e.g. /var/run/docker.sock). Falls back to DOCKER_HOST, then the
@@ -487,6 +492,12 @@ func (m *Manager) EnsureRunning(ctx context.Context, targetID string) error {
 	}
 	result, err := m.cli.ContainerInspect(ctx, targetID, client.ContainerInspectOptions{})
 	if err != nil {
+		if errdefs.IsNotFound(err) {
+			attempted, reproErr := m.reprovisionWithCompose(ctx, targetID)
+			if attempted {
+				return reproErr
+			}
+		}
 		return fmt.Errorf("inspecting container: %w", err)
 	}
 

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"syscall"
 	"time"
@@ -108,6 +109,13 @@ func resolveConfigPath() string {
 		return v
 	}
 	return defaultConfigPath
+}
+
+func resolveComposeDir(configPath string) string {
+	if v := os.Getenv("COMPOSE_DIR"); v != "" {
+		return v
+	}
+	return filepath.Join(filepath.Dir(configPath), "compose")
 }
 
 func resolveTraefikProxyHost() string {
@@ -360,6 +368,9 @@ type backendManager interface {
 	// The Docker backend uses this so WatchEvents can route start/stop events
 	// for unlabelled containers. No-op on Kubernetes.
 	SetConfigOnlyNames(nameToID map[string]string)
+	// SetComposeDir sets the directory scanned for compose files and image archives
+	// when re-provisioning a missing container. No-op on Kubernetes.
+	SetComposeDir(dir string)
 }
 
 // discoverAndApply runs backend discovery, applies the YAML config overlay,
@@ -489,6 +500,9 @@ func main() {
 
 	// Load dynamic config file
 	configPath := resolveConfigPath()
+	composeDir := resolveComposeDir(configPath)
+	mgr.SetComposeDir(composeDir)
+	log.Printf("compose dir: %s (set COMPOSE_DIR to override)", composeDir)
 	store := config.New(configPath)
 	if err := store.Load(); err != nil {
 		log.Fatalf("failed to load config file: %v", err)
