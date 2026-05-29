@@ -99,6 +99,7 @@ Configure via environment variables:
 | `TRAEFIK_ENTRYPOINT`  | Traefik entry point added to every generated router; set to `""` to omit | `websecure` |
 | `TRAEFIK_CERTRESOLVER` | Cert resolver added to every generated router's `tls.certResolver`; set to `""` to omit | `myresolver` |
 | `COMPOSE_DIR`         | Directory scanned for compose files and image archives when re-provisioning a missing container (see [Compose Re-provisioning](#compose-re-provisioning)) | `<dir of CONFIG_PATH>/compose` |
+| `METRICS_POSTGRES_URL` | PostgreSQL connection URL for metrics storage (see [PostgreSQL Metrics](#postgresql-metrics)). When set, per-port stats are accumulated and flushed to a `proxy_metrics` table every minute. When absent, metrics storage is disabled and no PostgreSQL connection is made | *(none — disabled)* |
 
 All are optional; defaults are safe for most setups.
 
@@ -163,6 +164,52 @@ Minimal liveness probe — always returns `200 ok` while the proxy is running.
 curl http://localhost:8080/health
 # ok
 ```
+
+---
+
+## PostgreSQL Metrics
+
+Set `METRICS_POSTGRES_URL` to a PostgreSQL connection URL to enable persistent metrics storage:
+
+```sh
+METRICS_POSTGRES_URL=postgres://user:password@localhost:5432/mydb
+```
+
+When set, the proxy:
+- logs `metrics: enabled (host=… db=…)` at startup (credentials are never logged)
+- creates a `proxy_metrics` table automatically if it does not exist
+- accumulates per-port stats in memory and flushes a rollup row every minute
+
+When absent, the proxy logs `metrics: disabled (METRICS_POSTGRES_URL not set)` and no PostgreSQL connection is made.
+
+### `proxy_metrics` table
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `rollup_at` | `TIMESTAMPTZ` | Start of the 1-minute window this row covers |
+| `container_name` | `TEXT` | Name of the managed container |
+| `port` | `INTEGER` | Proxy listen port |
+| `is_udp` | `BOOLEAN` | `true` for UDP flows, `false` for TCP connections |
+| `availability` | `TEXT` | Container availability mode (`always`, `cron`, `manual`) |
+| `connections_started` | `BIGINT` | New inbound connections/flows in the window |
+| `connections_ended` | `BIGINT` | Closed connections/flows in the window |
+| `connections_active` | `INTEGER` | Live connections at the end of the window |
+| `connections_peak` | `INTEGER` | Peak concurrent connections during the window |
+| `connections_failed` | `BIGINT` | Connections that could not be established |
+| `bytes_sent` | `BIGINT` | Bytes forwarded from client → upstream |
+| `bytes_received` | `BIGINT` | Bytes forwarded from upstream → client |
+| `request_duration_ms_avg/max/min` | `DOUBLE PRECISION / BIGINT` | Connection lifetime stats (null if no connections ended) |
+| `container_starts` | `BIGINT` | Container start events in the window |
+| `cold_start_ms_avg/max` | `DOUBLE PRECISION / BIGINT` | Cold-start latency stats (null if no cold starts) |
+| `container_stops` | `BIGINT` | Container stop events in the window |
+| `uptime_ms_total` | `BIGINT` | Milliseconds the container was running during the window |
+
+### Write behaviour
+
+- Writes are non-blocking — a failed write never delays proxied traffic.
+- Each write has a 15-second timeout.
+- Up to 5 failed snapshots are retained in memory and retried on the next tick. When the buffer is full the oldest snapshot is dropped. Each retry is written as its own row with its original `rollup_at` timestamp (no aggregation).
+- Windows are contiguous: the end of one window is the start of the next, so `uptime_ms_total` has no gaps.
 
 ---
 
