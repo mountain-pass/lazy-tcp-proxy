@@ -247,8 +247,8 @@ func (b *Backend) JoinNetworksForContainerNames(_ context.Context, _ []string) {
 
 // InspectRunning is a no-op for the k8s backend. Kubernetes running state is
 // already populated via label discovery in Discover().
-func (b *Backend) InspectRunning(_ context.Context, _ string) (bool, error) {
-	return false, nil
+func (b *Backend) InspectRunning(_ context.Context, _ string) (running, exists bool, err error) {
+	return false, true, nil
 }
 
 // SetConfigOnlyNames is a no-op for the k8s backend. Kubernetes events are

@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/containerd/errdefs"
 	"github.com/moby/moby/api/types/events"
 	"github.com/moby/moby/api/types/swarm"
 	"github.com/moby/moby/client"
@@ -382,13 +383,18 @@ func (m *Manager) Shutdown(ctx context.Context) {
 // wherever container IDs are expected, so no lookup is required.
 func (m *Manager) DefaultTargetID(name string) string { return name }
 
-// InspectRunning reports whether the container identified by targetID is running.
-func (m *Manager) InspectRunning(ctx context.Context, targetID string) (bool, error) {
-	result, err := m.cli.ContainerInspect(ctx, targetID, client.ContainerInspectOptions{})
-	if err != nil {
-		return false, fmt.Errorf("inspecting container: %w", err)
+// InspectRunning reports whether the container identified by targetID is running
+// and whether it exists at all. Returns (false, false, nil) when the container
+// is not found; returns (false, false, err) for other Docker API errors.
+func (m *Manager) InspectRunning(ctx context.Context, targetID string) (running, exists bool, err error) {
+	result, inspectErr := m.cli.ContainerInspect(ctx, targetID, client.ContainerInspectOptions{})
+	if inspectErr != nil {
+		if errdefs.IsNotFound(inspectErr) {
+			return false, false, nil
+		}
+		return false, false, fmt.Errorf("inspecting container: %w", inspectErr)
 	}
-	return result.Container.State.Running, nil
+	return result.Container.State.Running, true, nil
 }
 
 // SetConfigOnlyNames stores the name→registeredContainerID mapping for
