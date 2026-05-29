@@ -92,3 +92,4 @@
 | REQ-088 | Compose Re-provision on Missing Container                                | Medium | Completed     | 2026-05-29 | [2026-05-29-compose-reprovision-on-missing.md](2026-05-29-compose-reprovision-on-missing.md) |
 | REQ-089 | Dashboard Compose & Image Archive Indicators                             | Low    | Completed     | 2026-05-29 | [2026-05-29-dashboard-compose-indicators.md](2026-05-29-dashboard-compose-indicators.md) |
 | REQ-090 | Fix: Compose Re-provision — Wait for Container Running After Up()        | High   | Completed     | 2026-05-29 | [2026-05-29-fix-compose-wait-retry.md](2026-05-29-fix-compose-wait-retry.md) |
+| REQ-091 | Fix: CVE Dependency Updates (x/crypto, x/net, grpc, docker/docker)      | High   | Completed     | 2026-05-29 | [2026-05-29-fix-cves-dependency-updates.md](2026-05-29-fix-cves-dependency-updates.md) |
