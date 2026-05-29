@@ -87,3 +87,5 @@
 | REQ-083 | Container Availability Config (`availability`)                           | Medium | Completed     | 2026-05-27 | [2026-05-27-container-availability-config.md](2026-05-27-container-availability-config.md) |
 | REQ-084 | Status Dashboard — Cards to Table Layout                                 | Low    | Completed     | 2026-05-27 | [2026-05-27-cards-to-table-layout.md](2026-05-27-cards-to-table-layout.md) |
 | REQ-085 | WEB_PORT and WEB_HOST Environment Variables                              | Medium | Completed     | 2026-05-28 | [2026-05-28-web-port-and-web-host.md](2026-05-28-web-port-and-web-host.md) |
+| REQ-086 | Status Dashboard — ⚠️ Icon for Missing/Removed Containers               | Medium | Completed     | 2026-05-29 | [2026-05-29-missing-container-warning-icon.md](2026-05-29-missing-container-warning-icon.md) |
+| REQ-087 | README Warning: `docker system prune` Removes Stopped Containers         | Medium | Completed     | 2026-05-29 | [2026-05-29-readme-docker-system-prune-warning.md](2026-05-29-readme-docker-system-prune-warning.md) |
