@@ -2,7 +2,7 @@
 
 **Requirement**: [2026-05-29-metrics-postgres-url-env-var.md](2026-05-29-metrics-postgres-url-env-var.md)
 **Date**: 2026-05-29
-**Status**: Draft
+**Status**: Implemented
 
 ## Implementation Steps
 

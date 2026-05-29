@@ -6,15 +6,18 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/mountain-pass/lazy-tcp-proxy/internal/admin"
 	"github.com/mountain-pass/lazy-tcp-proxy/internal/config"
+	"github.com/mountain-pass/lazy-tcp-proxy/internal/metrics"
 	"github.com/mountain-pass/lazy-tcp-proxy/internal/proxy"
 	"github.com/mountain-pass/lazy-tcp-proxy/internal/scheduler"
 	traefikpkg "github.com/mountain-pass/lazy-tcp-proxy/internal/traefik"
@@ -109,6 +112,25 @@ func resolveConfigPath() string {
 		return v
 	}
 	return defaultConfigPath
+}
+
+func resolveMetricsPostgresURL() string {
+	raw := os.Getenv("METRICS_POSTGRES_URL")
+	if raw == "" {
+		log.Println("metrics: disabled (METRICS_POSTGRES_URL not set)")
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		log.Printf("metrics: disabled (invalid METRICS_POSTGRES_URL: %v)", err)
+		return ""
+	}
+	safe := *u
+	if safe.User != nil {
+		safe.User = url.UserPassword("***", "***")
+	}
+	log.Printf("metrics: enabled (host=%s db=%s)", u.Hostname(), strings.TrimPrefix(u.Path, "/"))
+	return raw
 }
 
 func resolveComposeDir(configPath string) string {
@@ -471,6 +493,17 @@ func main() {
 		log.Fatalf("failed to generate self-signed TLS certificate: %v", tlsErr)
 	}
 	srv := proxy.NewServer(ctx, mgr, startTime, idleTimeout, tick, startTimeout, tlsConfig)
+
+	// Initialise metrics collector (optional — only when METRICS_POSTGRES_URL is set)
+	if pgURL := resolveMetricsPostgresURL(); pgURL != "" {
+		collector, err := metrics.New(ctx, pgURL)
+		if err != nil {
+			log.Printf("metrics: failed to connect to PostgreSQL (%v); metrics disabled", err)
+		} else {
+			srv.SetCollector(collector)
+			go collector.Run(ctx)
+		}
+	}
 
 	// Create and wire the cron scheduler (must happen before Discover so that
 	// initial targets get their schedules registered).
