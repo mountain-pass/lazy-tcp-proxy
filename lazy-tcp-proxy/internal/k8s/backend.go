@@ -256,6 +256,9 @@ func (b *Backend) InspectRunning(_ context.Context, _ string) (running, exists b
 // not required.
 func (b *Backend) SetConfigOnlyNames(_ map[string]string) {}
 
+// SetComposeDir is a no-op for the k8s backend (compose re-provisioning is Docker-only).
+func (b *Backend) SetComposeDir(_ string) {}
+
 // DefaultTargetID returns "namespace/name" for use as a ContainerID when a
 // YAML config entry has no matching discovered Deployment.
 func (b *Backend) DefaultTargetID(name string) string {

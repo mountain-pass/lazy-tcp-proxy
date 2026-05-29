@@ -2,7 +2,7 @@
 
 **Requirement**: [2026-05-29-compose-reprovision-on-missing.md](2026-05-29-compose-reprovision-on-missing.md)
 **Date**: 2026-05-29
-**Status**: Draft
+**Status**: Implemented
 
 ---
 

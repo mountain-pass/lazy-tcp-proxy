@@ -89,4 +89,4 @@
 | REQ-085 | WEB_PORT and WEB_HOST Environment Variables                              | Medium | Completed     | 2026-05-28 | [2026-05-28-web-port-and-web-host.md](2026-05-28-web-port-and-web-host.md) |
 | REQ-086 | Status Dashboard — ⚠️ Icon for Missing/Removed Containers               | Medium | Completed     | 2026-05-29 | [2026-05-29-missing-container-warning-icon.md](2026-05-29-missing-container-warning-icon.md) |
 | REQ-087 | README Warning: `docker system prune` Removes Stopped Containers         | Medium | Completed     | 2026-05-29 | [2026-05-29-readme-docker-system-prune-warning.md](2026-05-29-readme-docker-system-prune-warning.md) |
-| REQ-088 | Compose Re-provision on Missing Container                                | Medium | In Progress   | 2026-05-29 | [2026-05-29-compose-reprovision-on-missing.md](2026-05-29-compose-reprovision-on-missing.md) |
+| REQ-088 | Compose Re-provision on Missing Container                                | Medium | Completed     | 2026-05-29 | [2026-05-29-compose-reprovision-on-missing.md](2026-05-29-compose-reprovision-on-missing.md) |
