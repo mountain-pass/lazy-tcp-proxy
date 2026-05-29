@@ -7,12 +7,19 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"time"
 
 	composecli "github.com/compose-spec/compose-go/v2/cli"
 	"github.com/docker/cli/cli/command"
 	cliflags "github.com/docker/cli/cli/flags"
 	composeapi "github.com/docker/compose/v2/pkg/api"
 	composesvc "github.com/docker/compose/v2/pkg/compose"
+	"github.com/moby/moby/client"
+)
+
+const (
+	composeWaitInterval = time.Second
+	composeWaitTimeout  = 30 * time.Second
 )
 
 // findComposeFile returns the first compose file found for name in composeDir,
@@ -47,6 +54,40 @@ func (m *Manager) loadImageFromTar(ctx context.Context, name, tarPath string) er
 	}
 	log.Printf("docker: image loaded for \033[33m%s\033[0m", name)
 	return nil
+}
+
+// waitForContainerRunning polls ContainerInspect until the named container is running,
+// starting it directly if it is found in a non-running state (e.g. "created").
+// This handles the case where compose Up() creates the container but errors before
+// starting it, leaving the container in "Created" state.
+// upErr is returned if the container never appears within composeWaitTimeout.
+func (m *Manager) waitForContainerRunning(ctx context.Context, name string, upErr error) error {
+	deadline := time.Now().Add(composeWaitTimeout)
+	for {
+		result, err := m.cli.ContainerInspect(ctx, name, client.ContainerInspectOptions{})
+		if err == nil {
+			if result.Container.State.Running {
+				return nil
+			}
+			// Container exists but is not yet running — start it directly.
+			log.Printf("docker: starting container \033[33m%s\033[0m after compose up", name)
+			if _, startErr := m.cli.ContainerStart(ctx, name, client.ContainerStartOptions{}); startErr != nil {
+				return fmt.Errorf("starting container after compose up: %w", startErr)
+			}
+			return nil
+		}
+		if time.Now().After(deadline) {
+			if upErr != nil {
+				return upErr
+			}
+			return fmt.Errorf("container %s did not appear after compose up", name)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(composeWaitInterval):
+		}
+	}
 }
 
 // reprovisionWithCompose re-provisions a missing container using a Docker Compose file
@@ -101,10 +142,17 @@ func (m *Manager) reprovisionWithCompose(ctx context.Context, name string) (bool
 	}
 
 	svc := composesvc.NewComposeService(dockerCLI)
-	if err := svc.Up(ctx, project, composeapi.UpOptions{
+	upErr := svc.Up(ctx, project, composeapi.UpOptions{
 		Create: composeapi.CreateOptions{Recreate: composeapi.RecreateDiverged},
-	}); err != nil {
-		return true, fmt.Errorf("compose up for %s: %w", name, err)
+	})
+	if upErr != nil {
+		log.Printf("docker: compose up for \033[33m%s\033[0m returned error (%v); checking container state", name, upErr)
+	}
+
+	// compose Up() may return an error after successfully creating the container
+	// (internal lookup race). Poll until the container is running before giving up.
+	if waitErr := m.waitForContainerRunning(ctx, name, upErr); waitErr != nil {
+		return true, waitErr
 	}
 
 	log.Printf("docker: container \033[33m%s\033[0m re-provisioned successfully", name)
