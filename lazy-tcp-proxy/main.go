@@ -65,19 +65,26 @@ func resolvePollInterval() time.Duration {
 	return time.Duration(n) * time.Second
 }
 
-const defaultStatusPort = 8080
+const defaultWebPort = 8080
 
-func resolveStatusPort() int {
-	raw := os.Getenv("STATUS_PORT")
-	if raw == "" {
-		return defaultStatusPort
+func resolveWebPort() int {
+	if raw := os.Getenv("WEB_PORT"); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n >= 0 {
+			return n
+		}
+		log.Printf("WEB_PORT=%q is invalid; checking STATUS_PORT", raw)
 	}
-	n, err := strconv.Atoi(raw)
-	if err != nil || n < 0 {
-		log.Printf("STATUS_PORT=%q is invalid; using default %d", raw, defaultStatusPort)
-		return defaultStatusPort
+	if raw := os.Getenv("STATUS_PORT"); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n >= 0 {
+			return n
+		}
+		log.Printf("STATUS_PORT=%q is invalid; using default %d", raw, defaultWebPort)
 	}
-	return n // 0 means disabled
+	return defaultWebPort
+}
+
+func resolveWebHost() string {
+	return os.Getenv("WEB_HOST")
 }
 
 const defaultAdminPort = 0
@@ -272,7 +279,7 @@ const statusDashboardHTML = `<!DOCTYPE html>
 </body>
 </html>`
 
-func runStatusServer(ctx context.Context, srv *proxy.ProxyServer, port int, traefikProxyHost, traefikEntryPoint, traefikCertResolver string) {
+func runStatusServer(ctx context.Context, srv *proxy.ProxyServer, port int, traefikProxyHost, traefikEntryPoint, traefikCertResolver, webHost string, webPort int) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -291,7 +298,7 @@ func runStatusServer(ctx context.Context, srv *proxy.ProxyServer, port int, trae
 			}
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(traefikpkg.BuildConfig(snaps, traefikProxyHost, traefikEntryPoint, traefikCertResolver)) //nolint:errcheck
+		json.NewEncoder(w).Encode(traefikpkg.BuildConfig(snaps, traefikProxyHost, traefikEntryPoint, traefikCertResolver, webHost, webPort)) //nolint:errcheck
 	})
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -456,17 +463,22 @@ func main() {
 	defer sched.Stop()
 
 	// Start the HTTP status server
-	statusPort := resolveStatusPort()
+	webPort := resolveWebPort()
+	webHost := resolveWebHost()
 	traefikProxyHost := resolveTraefikProxyHost()
 	traefikEntryPoint := resolveTraefikEntryPoint()
 	traefikCertResolver := resolveTraefikCertResolver()
-	if statusPort == 0 {
-		log.Println("status server: disabled (STATUS_PORT=0)")
+	if webPort == 0 {
+		log.Println("web server: disabled (WEB_PORT=0)")
 	} else {
-		log.Printf("status server: listening on :%d (set STATUS_PORT=0 to disable)", statusPort)
+		if webHost != "" {
+			log.Printf("web server: listening on :%d (WEB_HOST=%s)", webPort, webHost)
+		} else {
+			log.Printf("web server: listening on :%d (WEB_HOST not set — no Traefik route for web endpoint)", webPort)
+		}
 		log.Printf("traefik provider: GET /traefik available (TRAEFIK_PROXY_HOST=%s, TRAEFIK_ENTRYPOINT=%q, TRAEFIK_CERTRESOLVER=%q)",
 			traefikProxyHost, traefikEntryPoint, traefikCertResolver)
-		runStatusServer(ctx, srv, statusPort, traefikProxyHost, traefikEntryPoint, traefikCertResolver)
+		runStatusServer(ctx, srv, webPort, traefikProxyHost, traefikEntryPoint, traefikCertResolver, webHost, webPort)
 	}
 
 	// Load dynamic config file
