@@ -74,8 +74,8 @@ Configure via environment variables:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CONFIG_PATH` | `/etc/lazy-tcp-proxy/config.yaml` | Path to the YAML config file |
-| `ADMIN_PORT` | `8081` | Admin API port (`0` = disabled) |
-| `ADMIN_API_KEY` | *(required)* | API key for the admin API (`GET /config`, `GET /config/reload`, `PUT /config/update`) |
+| `ADMIN_PORT` | `0` | Admin API port (`0` = disabled) |
+| `ADMIN_API_KEY` | *(required if `ADMIN_PORT` > 0)* | API key for the admin API (`GET /config`, `GET /config/reload`, `PUT /config/update`) |
 
 **→ [README_CONFIG.md](README_CONFIG.md)**
 
@@ -89,52 +89,71 @@ Configure via environment variables:
 | `START_TIMEOUT_SECS`  | How long (in seconds) to wait for an upstream to be ready after a cold start — applies to the UDP datagram readiness probe, the HTTP health check (`lazy-tcp-proxy.http-healthcheck`), and the Docker HEALTHCHECK readiness gate. If the timeout is reached the connection/flow is dropped. Override per-container with the `lazy-tcp-proxy.start-timeout-secs` label | 30 |
 | `POLL_INTERVAL_SECS`  | How often (in seconds) to check for idle containers                | 15                        |
 | `DOCKER_SOCK`         | Path to Docker socket                                              | `/var/run/docker.sock`    |
-| `STATUS_PORT`         | Port for the HTTP status server; set to `0` to disable            | 8080                      |
+| `WEB_PORT`            | Port for the HTTP web server (dashboard, `/metrics`, `/traefik`, `/health`); set to `0` to disable. `STATUS_PORT` is accepted as a legacy alias | 8080 |
+| `WEB_HOST`            | When set, exposes lazy-tcp-proxy's web endpoint via Traefik: adds `Host('<WEB_HOST>') → http://<TRAEFIK_PROXY_HOST>:<WEB_PORT>` to `/traefik`. Unset = no Traefik route for the web endpoint | *(none)* |
+| `STATUS_PORT`         | Legacy alias for `WEB_PORT`; ignored when `WEB_PORT` is set       | 8080                      |
 | `CONFIG_PATH`         | Path to the dynamic YAML config file (see [README_CONFIG.md](README_CONFIG.md)) | `/etc/lazy-tcp-proxy/config.yaml` |
-| `ADMIN_PORT`          | Port for the admin API; set to `0` to disable (see [README_CONFIG.md](README_CONFIG.md)) | 8081 |
+| `ADMIN_PORT`          | Port for the admin API; set to `0` to disable (see [README_CONFIG.md](README_CONFIG.md)) | `0` (disabled) |
 | `ADMIN_API_KEY`       | API key for the admin API; required when `ADMIN_PORT` > 0          | *(none)*                  |
+| `TRAEFIK_PROXY_HOST`  | Hostname/IP Traefik uses to reach lazy-tcp-proxy's listen ports (used in `/traefik` service URLs) | `lazy-tcp-proxy` |
+| `TRAEFIK_ENTRYPOINT`  | Traefik entry point added to every generated router; set to `""` to omit | `websecure` |
+| `TRAEFIK_CERTRESOLVER` | Cert resolver added to every generated router's `tls.certResolver`; set to `""` to omit | `myresolver` |
+| `COMPOSE_DIR`         | Directory scanned for compose files and image archives when re-provisioning a missing container (see [Compose Re-provisioning](#compose-re-provisioning)) | `<dir of CONFIG_PATH>/compose` |
+| `METRICS_POSTGRES_URL` | PostgreSQL connection URL for metrics storage (see [PostgreSQL Metrics](#postgresql-metrics)). When set, per-port stats are accumulated and flushed to a `proxy_metrics` table every minute. When absent, metrics storage is disabled and no PostgreSQL connection is made | *(none — disabled)* |
 
 All are optional; defaults are safe for most setups.
 
 ---
 
-## Status Endpoint
+## Metrics Endpoint
 
 The proxy exposes a lightweight HTTP server for operational visibility.
 
-### `GET /status`
+### `GET /metrics`
 
-Returns a JSON array of all currently managed containers and their state, sorted alphabetically by container name (then by container ID as a tie-breaker).
+Returns a JSON object containing all currently managed containers and their state, plus process memory usage.
+
+`services` is sorted alphabetically by container name (then by container ID as a tie-breaker).
 
 `last_active` shows when a container last handled traffic (falling back to the proxy start time if it has never been used). `last_active_relative` shows the same information in human-readable form, making it easy to spot long-idle containers at a glance — handy for identifying decommissioning candidates.
 
+`container_missing` is `true` when a config-only container has been removed from Docker (e.g. by `docker system prune`) but is still registered in the proxy. The status dashboard shows ⚠️ for missing containers instead of 🔴 (stopped). The flag clears automatically when the container is recreated.
+
+`memory_used` is heap bytes currently in use; `memory_total` is total bytes mapped from the OS.
+
 ```sh
-curl http://localhost:8080/status
+curl http://localhost:8080/metrics
 ```
 
 ```json
-[
-  {
-    "container_id": "b2c3d4e5f6a1",
-    "container_name": "idle-service",
-    "listen_port": 9001,
-    "target_port": 8080,
-    "running": false,
-    "active_conns": 0,
-    "last_active": "2026-04-01T08:00:00Z",
-    "last_active_relative": "3 days ago"
-  },
-  {
-    "container_id": "a1b2c3d4e5f6",
-    "container_name": "my-service",
-    "listen_port": 9000,
-    "target_port": 80,
-    "running": true,
-    "active_conns": 1,
-    "last_active": "2026-04-01T12:34:56Z",
-    "last_active_relative": "8 hours ago"
-  }
-]
+{
+  "memory_total": 14688256,
+  "memory_used": 3421872,
+  "services": [
+    {
+      "container_id": "b2c3d4e5f6a1",
+      "container_name": "idle-service",
+      "listen_port": 9001,
+      "target_port": 8080,
+      "running": false,
+      "container_missing": false,
+      "active_conns": 0,
+      "last_active": "2026-04-01T08:00:00Z",
+      "last_active_relative": "3 days ago"
+    },
+    {
+      "container_id": "a1b2c3d4e5f6",
+      "container_name": "my-service",
+      "listen_port": 9000,
+      "target_port": 80,
+      "running": true,
+      "container_missing": false,
+      "active_conns": 1,
+      "last_active": "2026-04-01T12:34:56Z",
+      "last_active_relative": "8 hours ago"
+    }
+  ]
+}
 ```
 
 ### `GET /health`
@@ -148,6 +167,52 @@ curl http://localhost:8080/health
 
 ---
 
+## PostgreSQL Metrics
+
+Set `METRICS_POSTGRES_URL` to a PostgreSQL connection URL to enable persistent metrics storage:
+
+```sh
+METRICS_POSTGRES_URL=postgres://user:password@localhost:5432/mydb
+```
+
+When set, the proxy:
+- logs `metrics: enabled (host=… db=…)` at startup (credentials are never logged)
+- creates a `proxy_metrics` table automatically if it does not exist
+- accumulates per-port stats in memory and flushes a rollup row every minute
+
+When absent, the proxy logs `metrics: disabled (METRICS_POSTGRES_URL not set)` and no PostgreSQL connection is made.
+
+### `proxy_metrics` table
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `rollup_at` | `TIMESTAMPTZ` | Start of the 1-minute window this row covers |
+| `container_name` | `TEXT` | Name of the managed container |
+| `port` | `INTEGER` | Proxy listen port |
+| `is_udp` | `BOOLEAN` | `true` for UDP flows, `false` for TCP connections |
+| `availability` | `TEXT` | Container availability mode (`always`, `cron`, `manual`) |
+| `connections_started` | `BIGINT` | New inbound connections/flows in the window |
+| `connections_ended` | `BIGINT` | Closed connections/flows in the window |
+| `connections_active` | `INTEGER` | Live connections at the end of the window |
+| `connections_peak` | `INTEGER` | Peak concurrent connections during the window |
+| `connections_failed` | `BIGINT` | Connections that could not be established |
+| `bytes_sent` | `BIGINT` | Bytes forwarded from client → upstream |
+| `bytes_received` | `BIGINT` | Bytes forwarded from upstream → client |
+| `request_duration_ms_avg/max/min` | `DOUBLE PRECISION / BIGINT` | Connection lifetime stats (null if no connections ended) |
+| `container_starts` | `BIGINT` | Container start events in the window |
+| `cold_start_ms_avg/max` | `DOUBLE PRECISION / BIGINT` | Cold-start latency stats (null if no cold starts) |
+| `container_stops` | `BIGINT` | Container stop events in the window |
+| `uptime_ms_total` | `BIGINT` | Milliseconds the container was running during the window |
+
+### Write behaviour
+
+- Writes are non-blocking — a failed write never delays proxied traffic.
+- Each write has a 15-second timeout.
+- Up to 5 failed snapshots are retained in memory and retried on the next tick. When the buffer is full the oldest snapshot is dropped. Each retry is written as its own row with its original `rollup_at` timestamp (no aggregation).
+- Windows are contiguous: the end of one window is the start of the next, so `uptime_ms_total` has no gaps.
+
+---
+
 ## Docker Engine Feature Request
 
 This should be core functionality in the docker engine. As such, I've raised a Feature Request to add this behaviour - https://github.com/docker/roadmap/issues/899
@@ -157,6 +222,84 @@ This should be core functionality in the docker engine. As such, I've raised a F
 ## Questions and Answers
 
 [Can be found here.](QANDA.md)
+
+---
+
+## Caveats
+
+### `docker system prune` removes stopped containers
+
+`docker system prune` removes **all stopped containers** by default, not just unused images and build cache. Because `lazy-tcp-proxy` stops idle containers to save resources, your managed containers will almost certainly be stopped at the time you run the command — and will be permanently deleted.
+
+> **Warning:** Do not run `docker system prune` (or `docker container prune`) on a host running `lazy-tcp-proxy` unless you intend to remove your managed containers.
+
+If a config-only container (one registered via `config.yaml` rather than Docker labels) is removed this way, the proxy keeps its listener alive and waits for the container to be recreated. The status dashboard will show ⚠️ next to the container name until it comes back online. Run `docker compose up` (or equivalent) to recreate it — or let the proxy re-provision it automatically using [Compose Re-provisioning](#compose-re-provisioning).
+
+---
+
+## Compose Re-provisioning
+
+When a config-only container is missing and a connection arrives, the proxy can re-provision it automatically using a Docker Compose file you place in the compose directory (default: `/etc/lazy-tcp-proxy/compose/`).
+
+### Convention
+
+For each service you want auto-provisioned, drop one or two files in the compose directory:
+
+| File | Purpose |
+|------|---------|
+| `<name>.yml` or `<name>.yaml` | Docker Compose file for the service |
+| `<name>.tar.gz` | *(optional)* Custom image archive, loaded before `compose up` |
+
+**Example** — for a service named `minio`:
+
+```
+/etc/lazy-tcp-proxy/compose/
+  minio.yml        # required
+  minio.tar.gz     # optional — for offline/custom images
+```
+
+### How it works
+
+When a connection arrives and the container is missing, the proxy:
+
+1. Looks for `<name>.yml` (then `<name>.yaml`) in the compose directory.
+2. If a matching `<name>.tar.gz` archive also exists, loads it into Docker first (equivalent of `docker load -i minio.tar.gz`).
+3. Runs `docker compose up -d` using the compose file.
+4. Once the container starts, `WatchEvents` automatically clears the `missing` flag and begins proxying traffic.
+
+If no compose file is found, the proxy returns an error as before — no change in behaviour.
+
+### Compose file requirements
+
+The compose file must specify `container_name` matching the registered service name so the proxy can find the container after it starts:
+
+```yaml
+services:
+  minio:
+    image: minio/minio:latest
+    container_name: minio          # must match the name in config.yaml
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio-data:/data
+
+volumes:
+  minio-data:
+```
+
+> **Note:** Do not add `lazy-tcp-proxy.enabled=true` labels to containers in these compose files. The proxy already manages them via `config.yaml`; adding the label would create duplicate registrations.
+
+### Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `COMPOSE_DIR` | `<dir of CONFIG_PATH>/compose` | Directory scanned for compose files and image archives |
+
+Mount the directory into the proxy container:
+
+```yaml
+volumes:
+  - /path/to/compose-files:/etc/lazy-tcp-proxy/compose
+```
 
 ---
 
@@ -178,6 +321,7 @@ This should be core functionality in the docker engine. As such, I've raised a F
 - **Dependency cascade:** Automatically start/stop related containers together.
 - **HTTP health check:** Poll a URL after cold start before forwarding TCP traffic.
 - **Docker HEALTHCHECK gate:** Automatically waits for containers with a `HEALTHCHECK` to become healthy before forwarding.
+- **Compose re-provisioning:** Automatically recreates a missing container via a Docker Compose file when a connection arrives. Supports loading a custom image archive (`.tar.gz`) before running compose up.
 - **Structured, colorized logs:** Container names in yellow, network names in green, source addresses in cyan for easy scanning.
 
 ---

@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/containerd/errdefs"
 	"github.com/moby/moby/api/types/events"
 	"github.com/moby/moby/api/types/swarm"
 	"github.com/moby/moby/client"
@@ -30,7 +31,12 @@ type Manager struct {
 	swarmServices map[string]int    // serviceID → desiredReplicas
 	configOnlyMu  sync.RWMutex
 	configOnlyIDs map[string]string // container name → registered ContainerID (config-only targets)
+	composeDir    string            // directory scanned for compose files and image archives
 }
+
+// SetComposeDir sets the directory in which compose files and image archives are looked up
+// when re-provisioning a missing container. An empty string disables re-provisioning.
+func (m *Manager) SetComposeDir(dir string) { m.composeDir = dir }
 
 // NewManager creates a new Manager. The Docker socket path can be set via
 // DOCKER_SOCK (e.g. /var/run/docker.sock). Falls back to DOCKER_HOST, then the
@@ -209,6 +215,7 @@ func (m *Manager) containerToTargetInfo(ctx context.Context, containerID string)
 
 	cronStart := parseCronLabel(name, "lazy-tcp-proxy.cron-start", inspect.Config.Labels["lazy-tcp-proxy.cron-start"])
 	cronStop := parseCronLabel(name, "lazy-tcp-proxy.cron-stop", inspect.Config.Labels["lazy-tcp-proxy.cron-stop"])
+	availability := types.ParseAvailabilityLabel(name, inspect.Config.Labels["lazy-tcp-proxy.availability"])
 
 	httpHealthCheck := types.ParseHTTPHealthCheckLabel(name, inspect.Config.Labels["lazy-tcp-proxy.http-healthcheck"])
 	if httpHealthCheck != "" {
@@ -242,6 +249,10 @@ func (m *Manager) containerToTargetInfo(ctx context.Context, containerID string)
 	if v := strings.TrimSpace(inspect.Config.Labels["lazy-tcp-proxy.traefik-hosts"]); v != "" {
 		traefikHosts = types.ParseTraefikHosts("lazy-tcp-proxy.traefik-hosts", v)
 	}
+	var traefikTCPHosts []string
+	if v := strings.TrimSpace(inspect.Config.Labels["lazy-tcp-proxy.traefik-tcp-hosts"]); v != "" {
+		traefikTCPHosts = types.ParseTraefikHosts("lazy-tcp-proxy.traefik-tcp-hosts", v)
+	}
 
 	return types.TargetInfo{
 		ContainerID:     containerID,
@@ -264,6 +275,8 @@ func (m *Manager) containerToTargetInfo(ctx context.Context, containerID string)
 		APIKey:          apiKey,
 		BasicAuth:       basicAuth,
 		TraefikHosts:    traefikHosts,
+		TraefikTCPHosts: traefikTCPHosts,
+		Availability:    availability,
 	}, nil
 }
 
@@ -375,13 +388,18 @@ func (m *Manager) Shutdown(ctx context.Context) {
 // wherever container IDs are expected, so no lookup is required.
 func (m *Manager) DefaultTargetID(name string) string { return name }
 
-// InspectRunning reports whether the container identified by targetID is running.
-func (m *Manager) InspectRunning(ctx context.Context, targetID string) (bool, error) {
-	result, err := m.cli.ContainerInspect(ctx, targetID, client.ContainerInspectOptions{})
-	if err != nil {
-		return false, fmt.Errorf("inspecting container: %w", err)
+// InspectRunning reports whether the container identified by targetID is running
+// and whether it exists at all. Returns (false, false, nil) when the container
+// is not found; returns (false, false, err) for other Docker API errors.
+func (m *Manager) InspectRunning(ctx context.Context, targetID string) (running, exists bool, err error) {
+	result, inspectErr := m.cli.ContainerInspect(ctx, targetID, client.ContainerInspectOptions{})
+	if inspectErr != nil {
+		if errdefs.IsNotFound(inspectErr) {
+			return false, false, nil
+		}
+		return false, false, fmt.Errorf("inspecting container: %w", inspectErr)
 	}
-	return result.Container.State.Running, nil
+	return result.Container.State.Running, true, nil
 }
 
 // SetConfigOnlyNames stores the name→registeredContainerID mapping for
@@ -474,6 +492,12 @@ func (m *Manager) EnsureRunning(ctx context.Context, targetID string) error {
 	}
 	result, err := m.cli.ContainerInspect(ctx, targetID, client.ContainerInspectOptions{})
 	if err != nil {
+		if errdefs.IsNotFound(err) {
+			attempted, reproErr := m.reprovisionWithCompose(ctx, targetID)
+			if attempted {
+				return reproErr
+			}
+		}
 		return fmt.Errorf("inspecting container: %w", err)
 	}
 
@@ -782,6 +806,10 @@ func (m *Manager) serviceToTargetInfo(svc swarm.Service) (types.TargetInfo, erro
 	if v := strings.TrimSpace(labels["lazy-tcp-proxy.traefik-hosts"]); v != "" {
 		traefikHosts = types.ParseTraefikHosts("lazy-tcp-proxy.traefik-hosts", v)
 	}
+	var traefikTCPHosts []string
+	if v := strings.TrimSpace(labels["lazy-tcp-proxy.traefik-tcp-hosts"]); v != "" {
+		traefikTCPHosts = types.ParseTraefikHosts("lazy-tcp-proxy.traefik-tcp-hosts", v)
+	}
 
 	running := svc.ServiceStatus != nil && svc.ServiceStatus.RunningTasks > 0
 
@@ -804,6 +832,7 @@ func (m *Manager) serviceToTargetInfo(svc swarm.Service) (types.TargetInfo, erro
 		HasHealthCheck:  false,
 		DesiredReplicas: scale,
 		TraefikHosts:    traefikHosts,
+		TraefikTCPHosts: traefikTCPHosts,
 	}, nil
 }
 
@@ -1078,7 +1107,7 @@ func (m *Manager) WatchEvents(ctx context.Context, handler types.TargetHandler) 
 						// labels. Keep listeners alive so the target recovers automatically
 						// when the container is recreated (e.g. docker compose up).
 						log.Printf("docker: event: config-only container removed: \033[33m%s\033[0m (kept registered, waiting for restart)", name)
-						handler.ContainerStopped(rid)
+						handler.ContainerRemoved(rid)
 					} else {
 						log.Printf("docker: event: container removed: \033[33m%s\033[0m", name)
 						handler.RemoveTarget(msg.Actor.ID)

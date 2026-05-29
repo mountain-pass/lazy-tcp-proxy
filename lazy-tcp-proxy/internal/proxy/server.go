@@ -15,6 +15,8 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"reflect"
 	"runtime/debug"
 	"sort"
@@ -26,6 +28,7 @@ import (
 
 	"golang.org/x/sync/singleflight"
 
+	"github.com/mountain-pass/lazy-tcp-proxy/internal/metrics"
 	"github.com/mountain-pass/lazy-tcp-proxy/internal/types"
 )
 
@@ -42,10 +45,17 @@ type TargetSnapshot struct {
 	ListenPort         int        `json:"listen_port"`
 	TargetPort         int        `json:"target_port"`
 	Running            bool       `json:"running"`
+	ContainerMissing   bool       `json:"container_missing"`
 	ActiveConns        int32      `json:"active_conns"`
 	LastActive         *time.Time `json:"last_active"`
 	LastActiveRelative string     `json:"last_active_relative"`
 	TraefikHosts       []string   `json:"traefik_hosts,omitempty"`
+	TraefikTCPHosts    []string   `json:"traefik_tcp_hosts,omitempty"`
+	IsUDP              bool       `json:"is_udp"`
+	HasAuth            bool       `json:"has_auth"`
+	Availability       string     `json:"availability"`
+	HasComposeFile     bool       `json:"has_compose_file"`
+	HasTarGz           bool       `json:"has_tar_gz"`
 }
 
 // relativeTime returns a human-readable string describing how long ago t was,
@@ -86,6 +96,7 @@ var copyBufPool = sync.Pool{
 // targetState holds runtime state for a single listen-port→container-port mapping.
 type targetState struct {
 	info            types.TargetInfo
+	listenPort      int
 	targetPort      int
 	listener        net.Listener
 	lastActive      time.Time
@@ -95,6 +106,7 @@ type targetState struct {
 	httpHealthCheck string         // URL to poll for readiness; "" = disabled
 	hasHealthCheck  bool           // true if the container has a Docker HEALTHCHECK configured
 	running         bool
+	missing         bool
 	removed         bool
 	tlsEnabled      bool
 	apiKey          []string
@@ -159,6 +171,29 @@ type ProxyServer struct {
 	sched         cronScheduler      // nil if no scheduler configured
 	startGroup    singleflight.Group // deduplicates concurrent EnsureRunning calls per container
 	tlsConfig     *tls.Config        // shared self-signed cert; nil if cert generation failed
+	collector     *metrics.Collector // nil if metrics are disabled
+	composeDir    string             // directory scanned for compose files and image archives
+}
+
+// SetComposeDir sets the compose directory used to populate HasComposeFile and HasTarGz
+// in status snapshots. An empty string disables the file checks.
+func (s *ProxyServer) SetComposeDir(dir string) { s.composeDir = dir }
+
+// composeFlags checks whether a compose file and/or image archive exist for name.
+func (s *ProxyServer) composeFlags(name string) (hasCompose, hasTar bool) {
+	if s.composeDir == "" {
+		return false, false
+	}
+	for _, ext := range []string{".yml", ".yaml"} {
+		if _, err := os.Stat(filepath.Join(s.composeDir, name+ext)); err == nil {
+			hasCompose = true
+			break
+		}
+	}
+	if _, err := os.Stat(filepath.Join(s.composeDir, name+".tar.gz")); err == nil {
+		hasTar = true
+	}
+	return
 }
 
 // NewServer creates a new ProxyServer backed by the given backend.
@@ -183,6 +218,24 @@ func (s *ProxyServer) SetScheduler(sched cronScheduler) {
 	s.sched = sched
 }
 
+// SetCollector injects the metrics collector. Must be called before Discover.
+func (s *ProxyServer) SetCollector(c *metrics.Collector) {
+	s.collector = c
+}
+
+// countingWriter wraps an io.Writer and accumulates the number of bytes written.
+// Not safe for concurrent use — each goroutine should use its own instance.
+type countingWriter struct {
+	w io.Writer
+	n int64
+}
+
+func (cw *countingWriter) Write(p []byte) (int, error) {
+	written, err := cw.w.Write(p)
+	cw.n += int64(written)
+	return written, err
+}
+
 // CronStart is called by the scheduler to start a target on its cron-start schedule.
 // It is a no-op (with a log) if the target is already running.
 func (s *ProxyServer) CronStart(ctx context.Context, targetID, targetName string) {
@@ -201,15 +254,24 @@ func (s *ProxyServer) CronStart(ctx context.Context, targetID, targetName string
 		log.Printf("scheduler: cron-start: failed to start \033[33m%s\033[0m: %v", targetName, err)
 		return
 	}
+	now := time.Now()
 	s.mu.Lock()
 	for _, ts := range s.targets {
 		if ts.info.ContainerID == targetID {
 			ts.running = true
+			if s.collector != nil {
+				s.collector.RecordContainerStart(ts.listenPort, false)
+				s.collector.OnContainerRunning(ts.listenPort, false, now)
+			}
 		}
 	}
 	for _, uls := range s.udpTargets {
 		if uls.info.ContainerID == targetID {
 			uls.running = true
+			if s.collector != nil {
+				s.collector.RecordContainerStart(uls.listenPort, true)
+				s.collector.OnContainerRunning(uls.listenPort, true, now)
+			}
 		}
 	}
 	s.mu.Unlock()
@@ -256,12 +318,18 @@ func (s *ProxyServer) CronStop(ctx context.Context, targetID, targetName string)
 		if ts.info.ContainerID == targetID {
 			ts.running = false
 			info = ts.info
+			if s.collector != nil {
+				s.collector.ContainerStopped(ts.listenPort, false)
+			}
 		}
 	}
 	for _, uls := range s.udpTargets {
 		if uls.info.ContainerID == targetID {
 			uls.running = false
 			info = uls.info
+			if s.collector != nil {
+				s.collector.ContainerStopped(uls.listenPort, true)
+			}
 		}
 	}
 	s.mu.Unlock()
@@ -301,7 +369,7 @@ func (s *ProxyServer) Snapshot() []TargetSnapshot {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	now := time.Now()
-	out := make([]TargetSnapshot, 0, len(s.targets))
+	out := make([]TargetSnapshot, 0, len(s.targets)+len(s.udpTargets))
 	for listenPort, ts := range s.targets {
 		effective := ts.lastActive
 		if effective.IsZero() {
@@ -312,23 +380,66 @@ func (s *ProxyServer) Snapshot() []TargetSnapshot {
 		if len(id) > 12 {
 			id = id[:12]
 		}
+		hasCompose, hasTar := s.composeFlags(ts.info.ContainerName)
 		out = append(out, TargetSnapshot{
 			ContainerID:        id,
 			ContainerName:      ts.info.ContainerName,
 			ListenPort:         listenPort,
 			TargetPort:         ts.targetPort,
 			Running:            ts.running,
+			ContainerMissing:   ts.missing,
 			ActiveConns:        ts.activeConns.Load(),
 			LastActive:         &t,
 			LastActiveRelative: relativeTime(effective, now),
 			TraefikHosts:       ts.info.TraefikHosts,
+			TraefikTCPHosts:    ts.info.TraefikTCPHosts,
+			IsUDP:              false,
+			HasAuth:            len(ts.apiKey) > 0 || len(ts.basicAuth) > 0,
+			Availability:       types.EffectiveAvailability(ts.info),
+			HasComposeFile:     hasCompose,
+			HasTarGz:           hasTar,
+		})
+	}
+	for listenPort, uls := range s.udpTargets {
+		uls.mu.Lock()
+		lastAct := uls.lastActive
+		uls.mu.Unlock()
+		if lastAct.IsZero() {
+			lastAct = s.startTime
+		}
+		t := lastAct
+		id := uls.info.ContainerID
+		if len(id) > 12 {
+			id = id[:12]
+		}
+		hasCompose, hasTar := s.composeFlags(uls.info.ContainerName)
+		out = append(out, TargetSnapshot{
+			ContainerID:        id,
+			ContainerName:      uls.info.ContainerName,
+			ListenPort:         listenPort,
+			TargetPort:         uls.targetPort,
+			Running:            uls.running,
+			ContainerMissing:   uls.missing,
+			ActiveConns:        uls.activeFlows.Load(),
+			LastActive:         &t,
+			LastActiveRelative: relativeTime(lastAct, now),
+			TraefikHosts:       uls.info.TraefikHosts,
+			TraefikTCPHosts:    uls.info.TraefikTCPHosts,
+			IsUDP:              true,
+			HasAuth:            false,
+			Availability:       types.EffectiveAvailability(uls.info),
+			HasComposeFile:     hasCompose,
+			HasTarGz:           hasTar,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].ContainerName != out[j].ContainerName {
 			return out[i].ContainerName < out[j].ContainerName
 		}
-		return out[i].ContainerID < out[j].ContainerID
+		if out[i].IsUDP != out[j].IsUDP {
+			return !out[i].IsUDP // TCP before UDP
+		}
+		return out[i].ListenPort < out[j].ListenPort
 	})
 	return out
 }
@@ -397,10 +508,14 @@ func (s *ProxyServer) RegisterTarget(info types.TargetInfo) {
 			existing.httpHealthCheck = info.HTTPHealthCheck
 			existing.hasHealthCheck = info.HasHealthCheck
 			existing.running = info.Running
+			existing.missing = info.Missing
 			existing.removed = false
 			existing.tlsEnabled = info.TLS
 			existing.apiKey = info.APIKey
 			existing.basicAuth = info.BasicAuth
+			if s.collector != nil {
+				s.collector.RegisterPort(m.ListenPort, info.ContainerName, false, types.EffectiveAvailability(info))
+			}
 			log.Printf("proxy: updated TCP target \033[33m%s\033[0m on port %d->%d", info.ContainerName, m.ListenPort, m.TargetPort)
 			continue
 		}
@@ -422,6 +537,7 @@ func (s *ProxyServer) RegisterTarget(info types.TargetInfo) {
 
 		ts := &targetState{
 			info:            info,
+			listenPort:      m.ListenPort,
 			targetPort:      m.TargetPort,
 			listener:        ln,
 			lastActive:      time.Time{}, // zero — immediately idle
@@ -430,11 +546,15 @@ func (s *ProxyServer) RegisterTarget(info types.TargetInfo) {
 			httpHealthCheck: info.HTTPHealthCheck,
 			hasHealthCheck:  info.HasHealthCheck,
 			running:         info.Running,
+			missing:         info.Missing,
 			tlsEnabled:      info.TLS,
 			apiKey:          info.APIKey,
 			basicAuth:       info.BasicAuth,
 		}
 		s.targets[m.ListenPort] = ts
+		if s.collector != nil {
+			s.collector.RegisterPort(m.ListenPort, info.ContainerName, false, types.EffectiveAvailability(info))
+		}
 		log.Printf("proxy: registered target \033[33m%s\033[0m, TCP %d->%d", info.ContainerName, m.ListenPort, m.TargetPort)
 		go s.acceptLoop(ts)
 	}
@@ -447,7 +567,11 @@ func (s *ProxyServer) RegisterTarget(info types.TargetInfo) {
 			existing.idleTimeout = info.IdleTimeout
 			existing.startTimeout = effectiveTimeout(info.StartTimeout, s.startTimeout)
 			existing.running = info.Running
+			existing.missing = info.Missing
 			existing.removed = false
+			if s.collector != nil {
+				s.collector.RegisterPort(m.ListenPort, info.ContainerName, true, types.EffectiveAvailability(info))
+			}
 			log.Printf("proxy: updated UDP target \033[33m%s\033[0m on port %d->%d", info.ContainerName, m.ListenPort, m.TargetPort)
 			continue
 		}
@@ -459,16 +583,21 @@ func (s *ProxyServer) RegisterTarget(info types.TargetInfo) {
 		}
 		uls := &udpListenerState{
 			listenConn:   pc.(*net.UDPConn),
+			listenPort:   m.ListenPort,
 			targetPort:   m.TargetPort,
 			info:         info,
 			idleTimeout:  info.IdleTimeout,
 			startTimeout: effectiveTimeout(info.StartTimeout, s.startTimeout),
 			running:      info.Running,
+			missing:      info.Missing,
 			flows:        make(map[string]*udpFlow),
 			pending:      make(map[string]bool),
 		}
 		uls.upstreamReadyCond = sync.NewCond(&uls.mu)
 		s.udpTargets[m.ListenPort] = uls
+		if s.collector != nil {
+			s.collector.RegisterPort(m.ListenPort, info.ContainerName, true, types.EffectiveAvailability(info))
+		}
 		log.Printf("proxy: registered target \033[33m%s\033[0m, UDP %d->%d", info.ContainerName, m.ListenPort, m.TargetPort)
 		go s.udpReadLoop(uls)
 		go s.udpFlowSweeper(s.ctx, uls, s.pollInterval)
@@ -477,8 +606,11 @@ func (s *ProxyServer) RegisterTarget(info types.TargetInfo) {
 	// Keep name→ID map current for cascade lookups.
 	s.nameToID[info.ContainerName] = info.ContainerID
 
-	// Register with cron scheduler if any schedule is set.
-	if s.sched != nil && (info.CronStart != "" || info.CronStop != "") {
+	// Register with cron scheduler only when the effective availability is cron
+	// and at least one cron expression is present.
+	if s.sched != nil &&
+		types.EffectiveAvailability(info) == types.AvailabilityCron &&
+		(info.CronStart != "" || info.CronStop != "") {
 		s.sched.Register(info)
 	}
 }
@@ -493,6 +625,9 @@ func (s *ProxyServer) RemoveTarget(containerID string) {
 			log.Printf("proxy: removing target \033[33m%s\033[0m on TCP port %d", ts.info.ContainerName, port)
 			delete(s.nameToID, ts.info.ContainerName)
 			ts.removed = true
+			if s.collector != nil {
+				s.collector.UnregisterPort(port, false)
+			}
 			if err := ts.listener.Close(); err != nil {
 				log.Printf("proxy: error closing TCP listener on port %d: %v", port, err)
 			}
@@ -504,6 +639,9 @@ func (s *ProxyServer) RemoveTarget(containerID string) {
 			log.Printf("proxy: removing target \033[33m%s\033[0m on UDP port %d", uls.info.ContainerName, port)
 			delete(s.nameToID, uls.info.ContainerName)
 			uls.removed = true
+			if s.collector != nil {
+				s.collector.UnregisterPort(port, true)
+			}
 			if err := uls.listenConn.Close(); err != nil {
 				log.Printf("proxy: error closing UDP listener on port %d: %v", port, err)
 			}
@@ -545,11 +683,13 @@ func targetInfoEqual(a, b types.TargetInfo) bool {
 		reflect.DeepEqual(a.Dependants, b.Dependants) &&
 		a.CronStart == b.CronStart &&
 		a.CronStop == b.CronStop &&
+		a.Availability == b.Availability &&
 		a.HTTPHealthCheck == b.HTTPHealthCheck &&
 		a.TLS == b.TLS &&
 		reflect.DeepEqual(a.APIKey, b.APIKey) &&
 		reflect.DeepEqual(a.BasicAuth, b.BasicAuth) &&
-		reflect.DeepEqual(a.TraefikHosts, b.TraefikHosts)
+		reflect.DeepEqual(a.TraefikHosts, b.TraefikHosts) &&
+		reflect.DeepEqual(a.TraefikTCPHosts, b.TraefikTCPHosts)
 }
 
 // Update reconciles the proxy's registered targets with newTargets.
@@ -590,6 +730,9 @@ func (s *ProxyServer) ContainerStopped(containerID string) {
 		if ts.info.ContainerID == containerID {
 			ts.running = false
 			info = ts.info
+			if s.collector != nil {
+				s.collector.ContainerStopped(ts.listenPort, false)
+			}
 		}
 	}
 	for _, uls := range s.udpTargets {
@@ -597,6 +740,9 @@ func (s *ProxyServer) ContainerStopped(containerID string) {
 			uls.running = false
 			info = uls.info
 			affectedULS = append(affectedULS, uls)
+			if s.collector != nil {
+				s.collector.ContainerStopped(uls.listenPort, true)
+			}
 		}
 	}
 	s.mu.RUnlock()
@@ -617,20 +763,60 @@ func (s *ProxyServer) ContainerStopped(containerID string) {
 	}
 }
 
+// ContainerRemoved marks all port mappings for a config-only container as
+// missing (i.e. destroyed by pruning). The listeners are kept so the container
+// recovers automatically when it is recreated.
+func (s *ProxyServer) ContainerRemoved(containerID string) {
+	s.mu.RLock()
+	var affectedULS []*udpListenerState
+	for _, ts := range s.targets {
+		if ts.info.ContainerID == containerID {
+			ts.running = false
+			ts.missing = true
+		}
+	}
+	for _, uls := range s.udpTargets {
+		if uls.info.ContainerID == containerID {
+			uls.running = false
+			uls.missing = true
+			affectedULS = append(affectedULS, uls)
+		}
+	}
+	s.mu.RUnlock()
+	for _, uls := range affectedULS {
+		uls.mu.Lock()
+		uls.upstreamReady = false
+		if uls.upstreamStarting {
+			uls.upstreamStarting = false
+			uls.upstreamReadyCond.Broadcast()
+		}
+		uls.mu.Unlock()
+	}
+}
+
 // ContainerStarted marks all port mappings for the container as running and
 // cascades a start to any declared dependants.
 func (s *ProxyServer) ContainerStarted(containerID string) {
 	s.mu.Lock()
+	now := time.Now()
 	var info types.TargetInfo
 	for _, ts := range s.targets {
 		if ts.info.ContainerID == containerID {
 			ts.running = true
+			ts.missing = false
 			info = ts.info
+			if s.collector != nil {
+				s.collector.OnContainerRunning(ts.listenPort, false, now)
+			}
 		}
 	}
 	for _, uls := range s.udpTargets {
 		if uls.info.ContainerID == containerID {
 			uls.running = true
+			uls.missing = false
+			if s.collector != nil {
+				s.collector.OnContainerRunning(uls.listenPort, true, now)
+			}
 		}
 	}
 	s.mu.Unlock()
@@ -682,8 +868,8 @@ func (s *ProxyServer) checkInactivity(ctx context.Context) {
 		if ts.removed {
 			continue
 		}
-		if ts.info.CronStart != "" || ts.info.CronStop != "" {
-			continue // lifecycle managed by cron scheduler
+		if types.EffectiveAvailability(ts.info) != types.AvailabilityOnDemand {
+			continue // lifecycle not managed on-demand
 		}
 		e, ok := byContainer[ts.info.ContainerID]
 		if !ok {
@@ -701,8 +887,8 @@ func (s *ProxyServer) checkInactivity(ctx context.Context) {
 		if uls.removed {
 			continue
 		}
-		if uls.info.CronStart != "" || uls.info.CronStop != "" {
-			continue // lifecycle managed by cron scheduler
+		if types.EffectiveAvailability(uls.info) != types.AvailabilityOnDemand {
+			continue // lifecycle not managed on-demand
 		}
 		e, ok := byContainer[uls.info.ContainerID]
 		if !ok {
@@ -727,9 +913,15 @@ func (s *ProxyServer) checkInactivity(ctx context.Context) {
 			} else {
 				for _, ts := range e.tcpStates {
 					ts.running = false
+					if s.collector != nil {
+						s.collector.ContainerStopped(ts.listenPort, false)
+					}
 				}
 				for _, uls := range e.udpStates {
 					uls.running = false
+					if s.collector != nil {
+						s.collector.ContainerStopped(uls.listenPort, true)
+					}
 				}
 				if e.webhookURL != "" {
 					go s.fireWebhook(e.webhookURL, "container_stopped", e.containerID, e.name, "", "", 0)
@@ -865,6 +1057,15 @@ func (s *ProxyServer) handleConn(conn net.Conn, ts *targetState) {
 			ts.info.ContainerName, ts.targetPort, conn.RemoteAddr())
 		return
 	}
+
+	connStart := time.Now()
+	if s.collector != nil {
+		s.collector.ConnectionStarted(ts.listenPort, false)
+		defer func() {
+			s.collector.ConnectionEnded(ts.listenPort, false, time.Since(connStart).Milliseconds())
+		}()
+	}
+
 	log.Printf("proxy: new connection to \033[33m%s\033[0m (port %d) from \033[36m%s\033[0m",
 		ts.info.ContainerName, ts.targetPort, conn.RemoteAddr())
 
@@ -878,30 +1079,39 @@ func (s *ProxyServer) handleConn(conn net.Conn, ts *targetState) {
 		}()
 	}
 
-	_, startErr, shared := s.startGroup.Do(ts.info.ContainerID, func() (any, error) {
-		return nil, s.backend.EnsureRunning(ctx, ts.info.ContainerID)
-	})
-	if shared {
-		log.Printf("proxy: joined in-flight startup for \033[33m%s\033[0m", ts.info.ContainerName)
-	}
-	if startErr != nil {
-		log.Printf("proxy: could not start container \033[33m%s\033[0m: %v", ts.info.ContainerName, startErr)
-		return
-	}
-	s.mu.Lock()
-	for _, t := range s.targets {
-		if t.info.ContainerID == ts.info.ContainerID {
-			t.running = true
+	if ts.info.Availability != types.AvailabilityCron && ts.info.Availability != types.AvailabilityManual {
+		coldStart := time.Now()
+		_, startErr, shared := s.startGroup.Do(ts.info.ContainerID, func() (any, error) {
+			return nil, s.backend.EnsureRunning(ctx, ts.info.ContainerID)
+		})
+		if shared {
+			log.Printf("proxy: joined in-flight startup for \033[33m%s\033[0m", ts.info.ContainerName)
 		}
-	}
-	for _, u := range s.udpTargets {
-		if u.info.ContainerID == ts.info.ContainerID {
-			u.running = true
+		if startErr != nil {
+			log.Printf("proxy: could not start container \033[33m%s\033[0m: %v", ts.info.ContainerName, startErr)
+			if s.collector != nil {
+				s.collector.ConnectionFailed(ts.listenPort, false)
+			}
+			return
 		}
-	}
-	s.mu.Unlock()
-	if ts.info.WebhookURL != "" {
-		go s.fireWebhook(ts.info.WebhookURL, "container_started", ts.info.ContainerID, ts.info.ContainerName, "", "", 0)
+		if !shared && s.collector != nil {
+			s.collector.RecordColdStart(ts.listenPort, false, time.Since(coldStart).Milliseconds())
+		}
+		s.mu.Lock()
+		for _, t := range s.targets {
+			if t.info.ContainerID == ts.info.ContainerID {
+				t.running = true
+			}
+		}
+		for _, u := range s.udpTargets {
+			if u.info.ContainerID == ts.info.ContainerID {
+				u.running = true
+			}
+		}
+		s.mu.Unlock()
+		if ts.info.WebhookURL != "" {
+			go s.fireWebhook(ts.info.WebhookURL, "container_started", ts.info.ContainerID, ts.info.ContainerName, "", "", 0)
+		}
 	}
 
 	// Determine preferred network hint (first network ID in list; unused in k8s mode)
@@ -951,6 +1161,9 @@ func (s *ProxyServer) handleConn(conn net.Conn, ts *targetState) {
 
 	if upstream == nil {
 		log.Printf("proxy: exhausted retries connecting to \033[33m%s\033[0m: %v", ts.info.ContainerName, lastErr)
+		if s.collector != nil {
+			s.collector.ConnectionFailed(ts.listenPort, false)
+		}
 		return
 	}
 	defer upstream.Close() //nolint:errcheck
@@ -958,7 +1171,10 @@ func (s *ProxyServer) handleConn(conn net.Conn, ts *targetState) {
 	log.Printf("proxy: proxying connection to %s", upstream.RemoteAddr())
 
 	if len(ts.apiKey) > 0 || len(ts.basicAuth) > 0 {
-		s.handleHTTPProxy(conn, upstream, ts)
+		sent, recv := s.handleHTTPProxy(conn, upstream, ts)
+		if s.collector != nil {
+			s.collector.AddBytes(ts.listenPort, false, sent, recv)
+		}
 		ts.lastActive = time.Now()
 		log.Printf("proxy: connection to \033[33m%s\033[0m closed", ts.info.ContainerName)
 		return
@@ -974,6 +1190,10 @@ func (s *ProxyServer) handleConn(conn net.Conn, ts *targetState) {
 		})
 	}
 
+	var sentCW, recvCW countingWriter
+	sentCW.w = upstream
+	recvCW.w = conn
+
 	var wg sync.WaitGroup
 	wg.Add(2)
 
@@ -981,7 +1201,7 @@ func (s *ProxyServer) handleConn(conn net.Conn, ts *targetState) {
 		defer wg.Done()
 		buf := copyBufPool.Get().(*[]byte)
 		defer copyBufPool.Put(buf)
-		io.CopyBuffer(upstream, conn, *buf) //nolint:errcheck
+		io.CopyBuffer(&sentCW, conn, *buf) //nolint:errcheck
 		closeAll()
 	}()
 
@@ -989,18 +1209,24 @@ func (s *ProxyServer) handleConn(conn net.Conn, ts *targetState) {
 		defer wg.Done()
 		buf := copyBufPool.Get().(*[]byte)
 		defer copyBufPool.Put(buf)
-		io.CopyBuffer(conn, upstream, *buf) //nolint:errcheck
+		io.CopyBuffer(&recvCW, upstream, *buf) //nolint:errcheck
 		closeAll()
 	}()
 
 	wg.Wait()
+	if s.collector != nil {
+		s.collector.AddBytes(ts.listenPort, false, sentCW.n, recvCW.n)
+	}
 	log.Printf("proxy: connection to \033[33m%s\033[0m closed", ts.info.ContainerName)
 }
 
 // handleHTTPProxy handles a connection in HTTP mode: reads each request,
 // enforces X-API-Key, strips the header, and forwards to upstream.
-// Supports HTTP/1.1 keep-alive.
-func (s *ProxyServer) handleHTTPProxy(client, upstream net.Conn, ts *targetState) {
+// Supports HTTP/1.1 keep-alive. Returns total bytes sent to upstream and received from upstream.
+func (s *ProxyServer) handleHTTPProxy(client, upstream net.Conn, ts *targetState) (bytesSent, bytesRecv int64) {
+	var sentCW, recvCW countingWriter
+	sentCW.w = upstream
+	recvCW.w = client
 	br := bufio.NewReader(client)
 	ubr := bufio.NewReader(upstream)
 
@@ -1059,8 +1285,8 @@ func (s *ProxyServer) handleHTTPProxy(client, upstream net.Conn, ts *targetState
 			req.Header.Del("X-API-Key")
 		}
 
-		if err := req.Write(upstream); err != nil {
-			return
+		if err := req.Write(&sentCW); err != nil {
+			return sentCW.n, recvCW.n
 		}
 		if req.Body != nil {
 			req.Body.Close() //nolint:errcheck
@@ -1068,19 +1294,19 @@ func (s *ProxyServer) handleHTTPProxy(client, upstream net.Conn, ts *targetState
 
 		resp, err := http.ReadResponse(ubr, req)
 		if err != nil {
-			return
+			return sentCW.n, recvCW.n
 		}
 		keepAlive := req.ProtoAtLeast(1, 1) && !resp.Close
-		if err := resp.Write(client); err != nil {
+		if err := resp.Write(&recvCW); err != nil {
 			resp.Body.Close() //nolint:errcheck
-			return
+			return sentCW.n, recvCW.n
 		}
 		resp.Body.Close() //nolint:errcheck
 
 		ts.lastActive = time.Now()
 
 		if !keepAlive {
-			return
+			return sentCW.n, recvCW.n
 		}
 	}
 }

@@ -247,14 +247,17 @@ func (b *Backend) JoinNetworksForContainerNames(_ context.Context, _ []string) {
 
 // InspectRunning is a no-op for the k8s backend. Kubernetes running state is
 // already populated via label discovery in Discover().
-func (b *Backend) InspectRunning(_ context.Context, _ string) (bool, error) {
-	return false, nil
+func (b *Backend) InspectRunning(_ context.Context, _ string) (running, exists bool, err error) {
+	return false, true, nil
 }
 
 // SetConfigOnlyNames is a no-op for the k8s backend. Kubernetes events are
 // filtered at the API level by label selector; config-only event routing is
 // not required.
 func (b *Backend) SetConfigOnlyNames(_ map[string]string) {}
+
+// SetComposeDir is a no-op for the k8s backend (compose re-provisioning is Docker-only).
+func (b *Backend) SetComposeDir(_ string) {}
 
 // DefaultTargetID returns "namespace/name" for use as a ContainerID when a
 // YAML config entry has no matching discovered Deployment.
@@ -324,6 +327,7 @@ func (b *Backend) deploymentToTargetInfo(d appsv1.Deployment) (types.TargetInfo,
 
 	cronStart := parseCronAnnotation(d.Name, "lazy-tcp-proxy.cron-start", ann["lazy-tcp-proxy.cron-start"])
 	cronStop := parseCronAnnotation(d.Name, "lazy-tcp-proxy.cron-stop", ann["lazy-tcp-proxy.cron-stop"])
+	availability := types.ParseAvailabilityLabel(d.Name, ann["lazy-tcp-proxy.availability"])
 
 	httpHealthCheck := types.ParseHTTPHealthCheckLabel(d.Name, ann["lazy-tcp-proxy.http-healthcheck"])
 	if httpHealthCheck != "" {
@@ -360,6 +364,7 @@ func (b *Backend) deploymentToTargetInfo(d appsv1.Deployment) (types.TargetInfo,
 		TLS:             https,
 		APIKey:          apiKey,
 		BasicAuth:       basicAuth,
+		Availability:    availability,
 	}, nil
 }
 

@@ -24,6 +24,7 @@ Add these labels to any container you want proxied/managed:
 | `lazy-tcp-proxy.start-timeout-secs` | No | Override the global `START_TIMEOUT_SECS` for this container only (seconds). How long to wait for the upstream to respond to the first UDP datagram after a cold start before stopping the container and giving up |
 | `lazy-tcp-proxy.webhook-url` | No | HTTP(S) URL to POST lifecycle events to (see [Webhooks](#webhooks)) |
 | `lazy-tcp-proxy.dependants` | No | Comma-separated names of other managed containers/deployments that should start and stop alongside this one (see [Dependency Cascade](#dependency-cascade)) |
+| `lazy-tcp-proxy.availability` | No | Lifecycle management mode: `ondemand` (default — start on connection, stop when idle), `cron` (start/stop via cron schedule only; proxy does not start on connection), or `manual` (no lifecycle management; proxy forwards traffic only). Derived automatically when omitted: `cron` if either cron label is set, `ondemand` otherwise (see [Availability Modes](#availability-modes)) |
 | `lazy-tcp-proxy.cron-start` | No | 5-field cron expression — start the container/deployment on this schedule (see [Cron Scheduling](#cron-scheduling)) |
 | `lazy-tcp-proxy.cron-stop` | No | 5-field cron expression — stop the container/deployment on this schedule (see [Cron Scheduling](#cron-scheduling)) |
 | `lazy-tcp-proxy.http-healthcheck` | No | URL to poll after a cold start — proxy waits for a 2xx response before forwarding TCP traffic. Supports `{{container}}` placeholder (see [HTTP Health Check](#http-health-check)) |
@@ -31,6 +32,7 @@ Add these labels to any container you want proxied/managed:
 | `lazy-tcp-proxy.api-key` | No | Comma-separated list of accepted values for the `X-API-Key` header. Any matching key is accepted. Missing or incorrect key → `401 Unauthorized`. The header is stripped before forwarding (see [API Key Authentication](#api-key-authentication)) |
 | `lazy-tcp-proxy.basic-auth` | No | Comma-separated list of `user:password` credentials. Any matching credential is accepted via `Authorization: Basic`. Missing or incorrect credentials → `401 Unauthorized` with `WWW-Authenticate`. The header is stripped before forwarding (see [Basic Auth Authentication](#basic-auth-authentication)) |
 | `lazy-tcp-proxy.traefik-hosts` | No | Comma-separated `<domain>:<listen_port>` pairs — exposes these mappings via `GET /traefik` for Traefik's HTTP provider (see [Traefik Integration](#traefik-integration)) |
+| `lazy-tcp-proxy.traefik-tcp-hosts` | No | Comma-separated `<domain>:<listen_port>` pairs — generates Traefik TCP SNI routers on the `websecure` entrypoint (see [TCP SNI routing](#tcp-sni-routing-traefik-tcp-hosts)) |
 
 \* At least one of `lazy-tcp-proxy.ports` or `lazy-tcp-proxy.udp-ports` must be set. A container may use TCP only, UDP only, or both.
 
@@ -288,6 +290,36 @@ labels:
   - "lazy-tcp-proxy.enabled=true"
   - "lazy-tcp-proxy.ports=9000:80"
   - "lazy-tcp-proxy.webhook-url=https://hooks.example.com/my-service"
+```
+
+---
+
+## Availability Modes
+
+The `lazy-tcp-proxy.availability` label controls how the proxy manages the container's lifecycle.
+
+| Value | On-demand start | Idle timeout | Cron scheduling |
+|-------|-----------------|--------------|-----------------|
+| `ondemand` | ✅ yes | ✅ yes | ❌ no |
+| `cron` | ❌ no | ❌ no | ✅ yes (if cron labels set) |
+| `manual` | ❌ no | ❌ no | ❌ no |
+
+When the label is **not set**, the mode is derived automatically:
+- `cron-start` or `cron-stop` is present → `cron`
+- Neither cron label is set → `ondemand`
+
+**`ondemand` (default)**: The proxy starts the container on the first incoming connection and stops it after the idle timeout expires. This is the standard lazy-start behaviour.
+
+**`cron`**: The container lifecycle is managed entirely by the cron schedule. The proxy does **not** attempt to start the container when a connection arrives — if the container is not running, the connection fails immediately. Use this when you want strict schedule-only control over when the service is available.
+
+**`manual`**: The proxy forwards traffic without ever starting or stopping the container. Use this for containers managed by an external tool (host cron, CI runner, etc.) where the proxy should act purely as a port forwarder.
+
+```yaml
+# Pure passthrough — container is managed externally
+labels:
+  lazy-tcp-proxy.enabled: "true"
+  lazy-tcp-proxy.ports: "5432:5432"
+  lazy-tcp-proxy.availability: "manual"
 ```
 
 ---
@@ -637,11 +669,76 @@ providers:
     pollInterval: "5s"
 ```
 
+### TCP SNI routing (`traefik-tcp-hosts`)
+
+For non-HTTP TCP services (databases, message brokers, etc.) Traefik can route by the TLS SNI
+field — the domain name the client sends in the TLS ClientHello — without requiring HTTP.
+This allows multiple TCP services to share port 443 (`websecure`) and be distinguished by
+domain name alone.
+
+```
+lazy-tcp-proxy.traefik-tcp-hosts=<domain>:<listen_port>
+```
+
+The same format as `traefik-hosts`: comma-separated `domain:listen_port` pairs.
+
+**Example — MongoDB behind Traefik:**
+```yaml
+labels:
+  - "lazy-tcp-proxy.enabled=true"
+  - "lazy-tcp-proxy.ports=27015:27017"
+  - "lazy-tcp-proxy.traefik-tcp-hosts=mongo.example.com:27015"
+```
+
+**Generated TCP section:**
+```json
+{
+  "tcp": {
+    "routers": {
+      "mongo-example-com-27015-router": {
+        "entryPoints": ["websecure"],
+        "rule": "HostSNI(`mongo.example.com`)",
+        "service": "mongo-example-com-27015-service",
+        "tls": { "certResolver": "myresolver" }
+      }
+    },
+    "services": {
+      "mongo-example-com-27015-service": {
+        "loadBalancer": {
+          "servers": [{ "address": "lazy-tcp-proxy:27015" }]
+        }
+      }
+    }
+  }
+}
+```
+
+**TLS requirement:** SNI routing requires the client to initiate a TLS handshake so that Traefik
+can read the SNI field. Traefik terminates TLS; the backend (lazy-tcp-proxy) receives plain TCP.
+
+```bash
+# MongoDB
+mongosh "mongodb://mongo.example.com:443/?tls=true"
+
+# Redis
+redis-cli -h redis.example.com -p 443 --tls
+
+# PostgreSQL
+psql "host=pg.example.com port=443 sslmode=require"
+```
+
+A service can have **both** `traefik-hosts` (HTTP) and `traefik-tcp-hosts` (TCP SNI) at the same
+time — they are placed in separate `http` and `tcp` sections of the Traefik config with no
+collision.
+
+The `tcp` key is absent from the `/traefik` response when no service has `traefik-tcp-hosts` set.
+
 ### Protocol support
 
-`traefik-hosts` only applies to **HTTP services** — Traefik's HTTP provider routes by `Host()`
-header, which requires HTTP. Raw TCP and UDP services do not benefit from domain routing via this
-integration; they continue to work directly on their listen ports.
+`traefik-hosts` applies to **HTTP services** — Traefik's HTTP provider routes by `Host()` header.
+`traefik-tcp-hosts` applies to **TCP services** that use TLS — Traefik routes by the SNI field in
+the TLS ClientHello. Both use the same `websecure` entrypoint (port 443); no additional Traefik
+static entrypoints are required.
 
 ### Full Docker Compose example
 

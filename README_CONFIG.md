@@ -22,6 +22,8 @@ Configuration is stored in a YAML file on disk. Changes are applied by calling
 | `CONFIG_PATH` | `/etc/lazy-tcp-proxy/config.yaml` | Path to the YAML config file |
 | `ADMIN_PORT` | `0` | Port for the admin API server. Set to `0` to disable (default) |
 | `ADMIN_API_KEY` | *(required if `ADMIN_PORT` > 0)* | API key for authenticating admin API requests |
+| `WEB_PORT` | `8080` | Port for the HTTP web server (dashboard, `/metrics`, `/traefik`, `/health`); `STATUS_PORT` is a legacy alias |
+| `WEB_HOST` | *(none)* | When set, adds `Host('<WEB_HOST>') → http://<TRAEFIK_PROXY_HOST>:<WEB_PORT>` to `/traefik`, exposing the web endpoint via Traefik |
 | `TRAEFIK_PROXY_HOST` | `lazy-tcp-proxy` | Hostname/IP Traefik uses to reach lazy-tcp-proxy's listen ports (see [Traefik Integration](README_LABELS.md#traefik-integration)) |
 | `TRAEFIK_ENTRYPOINT` | `websecure` | Traefik entry point name added to every generated router's `entryPoints`; set to `""` to omit |
 | `TRAEFIK_CERTRESOLVER` | `myresolver` | Cert resolver name added to every generated router's `tls.certResolver`; set to `""` to omit |
@@ -55,6 +57,7 @@ services:
 #    dependants: ["other-service"]
 #    cron_start: "0 9 * * 1-5"
 #    cron_stop:  "0 17 * * 1-5"
+#    availability: "ondemand"   # ondemand (default), cron, or manual
 #    http_healthcheck: "http://{{container}}:8080/health"
 #    tls: true
 #    api_key:
@@ -63,6 +66,8 @@ services:
 #      - "user:password"
 #    traefik_hosts:
 #      - "myapp.localhost:9000"
+#    traefik_tcp_hosts:
+#      - "mongo.localhost:27015"
 ```
 
 ### Docker Compose setup
@@ -110,6 +115,7 @@ services:
       - "other-service"           # cascade start/stop to these containers
     cron_start: "0 9 * * 1-5"    # start Mon–Fri at 09:00
     cron_stop:  "0 17 * * 1-5"   # stop  Mon–Fri at 17:00
+    availability: "ondemand"     # ondemand (default), cron (schedule-only), or manual (passthrough)
     http_healthcheck: "http://{{container}}:8080/health"
     tls: true                     # wrap listener with TLS (shared self-signed cert)
     api_key:                      # require X-API-Key header matching any listed value
@@ -118,6 +124,8 @@ services:
       - "nick:somepassword"
     traefik_hosts:
       - "myapp.localhost:9000"    # domain:listen_port pairs for Traefik HTTP provider
+    traefik_tcp_hosts:
+      - "mongo.localhost:9001"    # domain:listen_port pairs for Traefik TCP SNI routing
 ```
 
 See [README_LABELS.md](README_LABELS.md) for full descriptions of each field — the YAML fields

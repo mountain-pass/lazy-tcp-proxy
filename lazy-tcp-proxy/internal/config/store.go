@@ -40,6 +40,8 @@ type ServiceEntry struct {
 	BasicAuth        []string `yaml:"basic_auth,omitempty"        json:"basic_auth,omitempty"`
 	Scale            *int     `yaml:"scale,omitempty"             json:"scale,omitempty"`
 	TraefikHosts     []string `yaml:"traefik_hosts,omitempty"     json:"traefik_hosts,omitempty"`
+	TraefikTCPHosts  []string `yaml:"traefik_tcp_hosts,omitempty"  json:"traefik_tcp_hosts,omitempty"`
+	Availability     string   `yaml:"availability,omitempty"       json:"availability,omitempty"`
 }
 
 // Store manages a YAML config file on disk and the in-memory config it represents.
@@ -75,6 +77,7 @@ func (s *Store) Load() error {
 #    cron_start: "0 9 * * 1-5"
 #    cron_stop:  "0 17 * * 1-5"
 #    http_healthcheck: "http://{{container}}:8080/health"
+#    availability: "ondemand"   # ondemand (default), cron, or manual
 #    tls: true
 #    api_key:
 #      - "your-secret-key"
@@ -243,6 +246,8 @@ func entryToTargetInfo(entry ServiceEntry) (types.TargetInfo, error) {
 	info.APIKey = entry.APIKey
 	info.BasicAuth = entry.BasicAuth
 	info.TraefikHosts = entry.TraefikHosts
+	info.TraefikTCPHosts = entry.TraefikTCPHosts
+	info.Availability = types.ParseAvailabilityLabel(entry.Name, entry.Availability)
 
 	if entry.Scale != nil && *entry.Scale >= 1 {
 		info.DesiredReplicas = *entry.Scale
@@ -275,6 +280,12 @@ func validate(cfg DynamicConfig) []error {
 				errs = append(errs, fmt.Errorf("service %q: invalid webhook_url %q: %w", entry.Name, entry.WebhookURL, err))
 			}
 		}
+		switch entry.Availability {
+		case "", types.AvailabilityOnDemand, types.AvailabilityCron, types.AvailabilityManual:
+			// valid
+		default:
+			errs = append(errs, fmt.Errorf("service %q: invalid availability %q (must be ondemand, cron, or manual)", entry.Name, entry.Availability))
+		}
 	}
 	return errs
 }
@@ -291,9 +302,10 @@ func (c *TargetCollector) RegisterTarget(info types.TargetInfo) {
 	c.targets = append(c.targets, info)
 	c.mu.Unlock()
 }
-func (c *TargetCollector) RemoveTarget(_ string)      {}
-func (c *TargetCollector) ContainerStopped(_ string)  {}
-func (c *TargetCollector) ContainerStarted(_ string)  {}
+func (c *TargetCollector) RemoveTarget(_ string)       {}
+func (c *TargetCollector) ContainerStopped(_ string)   {}
+func (c *TargetCollector) ContainerStarted(_ string)   {}
+func (c *TargetCollector) ContainerRemoved(_ string)   {}
 
 // Targets returns a copy of all collected targets.
 func (c *TargetCollector) Targets() []types.TargetInfo {

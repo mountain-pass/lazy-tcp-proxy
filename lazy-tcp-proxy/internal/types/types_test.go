@@ -340,3 +340,77 @@ func TestParseHTTPHealthCheckLabel_InvalidURL(t *testing.T) {
 		t.Errorf("expected empty string for invalid URL, got %q", got)
 	}
 }
+
+// ---- ParseAvailabilityLabel ----
+
+func TestParseAvailabilityLabel_ValidValues(t *testing.T) {
+	cases := []string{"", "ondemand", "cron", "manual"}
+	for _, v := range cases {
+		if got := ParseAvailabilityLabel("svc", v); got != v {
+			t.Errorf("ParseAvailabilityLabel(%q): got %q, want %q", v, got, v)
+		}
+	}
+}
+
+func TestParseAvailabilityLabel_InvalidValue(t *testing.T) {
+	if got := ParseAvailabilityLabel("svc", "always"); got != "" {
+		t.Errorf("expected empty string for invalid value, got %q", got)
+	}
+}
+
+func TestParseAvailabilityLabel_Whitespace(t *testing.T) {
+	if got := ParseAvailabilityLabel("svc", "  manual  "); got != "manual" {
+		t.Errorf("expected %q, got %q", "manual", got)
+	}
+}
+
+// ---- EffectiveAvailability ----
+
+func TestEffectiveAvailability_ExplicitOnDemand(t *testing.T) {
+	info := TargetInfo{Availability: AvailabilityOnDemand}
+	if got := EffectiveAvailability(info); got != AvailabilityOnDemand {
+		t.Errorf("got %q, want %q", got, AvailabilityOnDemand)
+	}
+}
+
+func TestEffectiveAvailability_ExplicitCron(t *testing.T) {
+	info := TargetInfo{Availability: AvailabilityCron}
+	if got := EffectiveAvailability(info); got != AvailabilityCron {
+		t.Errorf("got %q, want %q", got, AvailabilityCron)
+	}
+}
+
+func TestEffectiveAvailability_ExplicitManual(t *testing.T) {
+	info := TargetInfo{Availability: AvailabilityManual}
+	if got := EffectiveAvailability(info); got != AvailabilityManual {
+		t.Errorf("got %q, want %q", got, AvailabilityManual)
+	}
+}
+
+func TestEffectiveAvailability_DerivedCronFromCronStart(t *testing.T) {
+	info := TargetInfo{CronStart: "0 9 * * 1-5"}
+	if got := EffectiveAvailability(info); got != AvailabilityCron {
+		t.Errorf("got %q, want %q", got, AvailabilityCron)
+	}
+}
+
+func TestEffectiveAvailability_DerivedCronFromCronStop(t *testing.T) {
+	info := TargetInfo{CronStop: "0 17 * * 1-5"}
+	if got := EffectiveAvailability(info); got != AvailabilityCron {
+		t.Errorf("got %q, want %q", got, AvailabilityCron)
+	}
+}
+
+func TestEffectiveAvailability_DerivedOnDemandWhenNoCron(t *testing.T) {
+	info := TargetInfo{}
+	if got := EffectiveAvailability(info); got != AvailabilityOnDemand {
+		t.Errorf("got %q, want %q", got, AvailabilityOnDemand)
+	}
+}
+
+func TestEffectiveAvailability_ExplicitOnDemandOverridesCronExpressions(t *testing.T) {
+	info := TargetInfo{Availability: AvailabilityOnDemand, CronStart: "0 9 * * 1-5"}
+	if got := EffectiveAvailability(info); got != AvailabilityOnDemand {
+		t.Errorf("explicit ondemand should override cron expressions; got %q", got)
+	}
+}
