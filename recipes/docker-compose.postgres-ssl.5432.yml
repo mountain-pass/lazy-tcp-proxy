@@ -1,0 +1,49 @@
+name: postgres-ssl
+
+services:
+  # Temporary init container that generates self-signed SSL certificates
+  # Exits after generating certs; postgres waits for it via depends_on
+  ssl-cert-init:
+    image: alpine:3.20
+    container_name: ssl-cert-init
+    command: sh -c "apk add --no-cache openssl && sh /scripts/generate-certs.sh"
+    volumes:
+      - ./postgres/ssl_certs:/certs
+      - ./postgres/generate-certs.sh:/scripts/generate-certs.sh:ro
+
+  postgres_ssl:
+    image: postgres:17.6-alpine3.22
+    container_name: postgres-ssl
+    restart: unless-stopped
+    depends_on:
+      ssl-cert-init:
+        condition: service_completed_successfully
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
+      POSTGRES_DB: ${POSTGRES_DB:-localdb}
+        #    ports:
+        #      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data_176_ssl:/var/lib/postgresql/data
+      - ./postgres/ssl_certs:/var/lib/postgresql/certs:ro
+      - ./postgres/pg_hba.conf:/var/lib/postgresql/pg_hba.conf:ro
+    # Enable SSL and point to the generated certificates
+    command: >
+      postgres
+        -c ssl=on
+        -c ssl_cert_file=/var/lib/postgresql/certs/server.crt
+        -c ssl_key_file=/var/lib/postgresql/certs/server.key
+        -c ssl_ca_file=/var/lib/postgresql/certs/ca.crt
+        -c hba_file=/var/lib/postgresql/pg_hba.conf
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-admin}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    labels:
+      - "lazy-tcp-proxy.enabled=true"
+      - "lazy-tcp-proxy.ports=5432:5432"
+
+volumes:
+  postgres_data_176_ssl:
