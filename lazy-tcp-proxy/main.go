@@ -575,10 +575,12 @@ func main() {
 	// Initialise metrics collector after network join and target registration,
 	// so a locally hosted PostgreSQL container is reachable via its Docker network.
 	if pgURL := resolveMetricsPostgresURL(); pgURL != "" {
+		log.Printf("metrics: connecting to PostgreSQL...")
 		collector, err := metrics.New(ctx, pgURL)
 		if err != nil {
 			log.Printf("metrics: failed to connect to PostgreSQL (%v); metrics disabled", err)
 		} else {
+			log.Printf("metrics: connected to PostgreSQL successfully")
 			srv.SetCollector(collector)
 			go collector.Run(ctx)
 		}
