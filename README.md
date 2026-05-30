@@ -182,6 +182,14 @@ When set, the proxy:
 
 When absent, the proxy logs `metrics: disabled (METRICS_POSTGRES_URL not set)` and no PostgreSQL connection is made.
 
+To verify the connection URL is correct before starting the proxy:
+
+```sh
+psql "postgres://user:password@localhost:5432/mydb"
+# with SSL:
+psql "postgres://user:password@host/dbname?sslmode=require"
+```
+
 ### `proxy_metrics` table
 
 | Column | Type | Description |
