@@ -82,7 +82,7 @@ func (s *Store) Load() error {
 #    api_key:
 #      - "your-secret-key"
 #    basic_auth:
-#      - "user:password"
+#      - "user:$2y$12$hashedpassword"   # htpasswd bcrypt hash (use: htpasswd -nbB user password)
 `)
 		if werr := os.WriteFile(s.path, placeholder, 0o644); werr != nil {
 			log.Printf("config: could not create placeholder at %s: %v", s.path, werr)
