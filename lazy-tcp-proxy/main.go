@@ -512,17 +512,6 @@ func main() {
 	}
 	srv := proxy.NewServer(ctx, mgr, startTime, idleTimeout, tick, startTimeout, tlsConfig)
 
-	// Initialise metrics collector (optional — only when METRICS_POSTGRES_URL is set)
-	if pgURL := resolveMetricsPostgresURL(); pgURL != "" {
-		collector, err := metrics.New(ctx, pgURL)
-		if err != nil {
-			log.Printf("metrics: failed to connect to PostgreSQL (%v); metrics disabled", err)
-		} else {
-			srv.SetCollector(collector)
-			go collector.Run(ctx)
-		}
-	}
-
 	// Create and wire the cron scheduler (must happen before Discover so that
 	// initial targets get their schedules registered).
 	sched := scheduler.New(ctx, srv)
@@ -581,6 +570,18 @@ func main() {
 	log.Println("performing initial target discovery...")
 	if err := discoverAndApply(ctx, mgr, store, srv); err != nil {
 		log.Printf("initial discovery error: %v", err)
+	}
+
+	// Initialise metrics collector after network join and target registration,
+	// so a locally hosted PostgreSQL container is reachable via its Docker network.
+	if pgURL := resolveMetricsPostgresURL(); pgURL != "" {
+		collector, err := metrics.New(ctx, pgURL)
+		if err != nil {
+			log.Printf("metrics: failed to connect to PostgreSQL (%v); metrics disabled", err)
+		} else {
+			srv.SetCollector(collector)
+			go collector.Run(ctx)
+		}
 	}
 
 	// Watch for runtime changes (WatchEvents/WatchServiceEvents call RegisterTarget
