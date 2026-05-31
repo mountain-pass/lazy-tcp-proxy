@@ -526,7 +526,7 @@ Set `lazy-tcp-proxy.basic-auth` to require HTTP Basic Auth credentials on every 
 Passwords are stored as **bcrypt hashes** (htpasswd format) — never in cleartext. Generate entries with:
 
 ```sh
-htpasswd -nbB nick somepassword
+docker run --rm --entrypoint htpasswd httpd:2 -Bbn nick somepassword
 # outputs: nick:$2y$05$...
 ```
 

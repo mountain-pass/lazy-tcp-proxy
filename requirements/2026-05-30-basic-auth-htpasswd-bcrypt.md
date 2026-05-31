@@ -15,7 +15,7 @@
   1. Comparing the submitted username against the stored username (constant-time).
   2. Verifying the submitted password against the stored bcrypt hash using `bcrypt.CompareHashAndPassword`.
 - Cleartext passwords are no longer accepted.
-- Users generate entries with `htpasswd -nbB <user> <password>`.
+- Users generate entries with `docker run --rm --entrypoint htpasswd httpd:2 -Bbn <user> <password>`.
 
 ## Technical Requirements
 
