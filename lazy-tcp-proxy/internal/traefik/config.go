@@ -23,8 +23,21 @@ type TraefikConfig struct {
 
 // HTTPConfig holds the routers and services sections of the HTTP provider payload.
 type HTTPConfig struct {
-	Routers  map[string]HTTPRouter  `json:"routers"`
-	Services map[string]HTTPService `json:"services"`
+	Routers           map[string]HTTPRouter           `json:"routers"`
+	Services          map[string]HTTPService          `json:"services"`
+	ServersTransports map[string]ServersTransport     `json:"serversTransports,omitempty"`
+}
+
+// ServersTransport holds timeout configuration for upstream connections.
+type ServersTransport struct {
+	ForwardingTimeouts ForwardingTimeouts `json:"forwardingTimeouts"`
+}
+
+// ForwardingTimeouts holds the individual timeout values for a ServersTransport.
+type ForwardingTimeouts struct {
+	DialTimeout           string `json:"dialTimeout,omitempty"`
+	ResponseHeaderTimeout string `json:"responseHeaderTimeout,omitempty"`
+	IdleConnTimeout       string `json:"idleConnTimeout,omitempty"`
 }
 
 // RouterTLS holds the TLS options for a Traefik router.
@@ -47,7 +60,8 @@ type HTTPService struct {
 
 // LoadBalancer holds the upstream server list for a Traefik HTTP service.
 type LoadBalancer struct {
-	Servers []Server `json:"servers"`
+	Servers          []Server `json:"servers"`
+	ServersTransport string   `json:"serversTransport,omitempty"`
 }
 
 // Server is a single upstream server URL (HTTP).
@@ -102,17 +116,30 @@ func sanitiseName(s string) string {
 	return strings.Trim(multiHyphen.ReplaceAllString(b.String(), "-"), "-")
 }
 
+// TransportTimeouts holds optional timeout overrides emitted as a named ServersTransport.
+// Empty strings mean the field is omitted (Traefik uses its own default).
+type TransportTimeouts struct {
+	DialTimeout           string
+	ResponseHeaderTimeout string
+	IdleConnTimeout       string
+}
+
 // BuildConfig builds a Traefik HTTP provider config from a slice of per-listen-port
 // snapshots. proxyHost is the hostname Traefik uses to reach lazy-tcp-proxy.
 // entryPoint and certResolver are applied to every emitted router when non-empty.
 // When webHost is non-empty, an additional HTTP router+service is emitted that routes
 // Host(`webHost`) → http://proxyHost:webPort (exposing the lazy-tcp-proxy web endpoint).
+// When timeouts is non-nil and has at least one field set, a named ServersTransport
+// ("lazy-transport") is emitted and wired to every HTTP service.
 //
 // HTTP section: one router+service per TraefikHosts entry whose port matches ListenPort.
 // TCP section:  one router+service per TraefikTCPHosts entry whose port matches ListenPort,
 //
 //	using HostSNI rule on the configured entrypoint.
-func BuildConfig(snapshots []Snapshot, proxyHost, entryPoint, certResolver, webHost string, webPort int) TraefikConfig {
+func BuildConfig(snapshots []Snapshot, proxyHost, entryPoint, certResolver, webHost string, webPort int, timeouts *TransportTimeouts) TraefikConfig {
+	const transportName = "lazy-transport"
+	useTransport := timeouts != nil && (timeouts.DialTimeout != "" || timeouts.ResponseHeaderTimeout != "" || timeouts.IdleConnTimeout != "")
+
 	httpRouters := make(map[string]HTTPRouter)
 	httpServices := make(map[string]HTTPService)
 	tcpRouters := make(map[string]TCPRouter)
@@ -143,11 +170,11 @@ func BuildConfig(snapshots []Snapshot, proxyHost, entryPoint, certResolver, webH
 				router.TLS = &RouterTLS{CertResolver: certResolver}
 			}
 			httpRouters[name+"-router"] = router
-			httpServices[name+"-service"] = HTTPService{
-				LoadBalancer: LoadBalancer{
-					Servers: []Server{{URL: fmt.Sprintf("http://%s:%d", proxyHost, port)}},
-				},
+			lb := LoadBalancer{Servers: []Server{{URL: fmt.Sprintf("http://%s:%d", proxyHost, port)}}}
+			if useTransport {
+				lb.ServersTransport = transportName
 			}
+			httpServices[name+"-service"] = HTTPService{LoadBalancer: lb}
 		}
 
 		// TCP section — from explicit traefik_tcp_hosts entries (HostSNI routing).
@@ -195,14 +222,26 @@ func BuildConfig(snapshots []Snapshot, proxyHost, entryPoint, certResolver, webH
 			router.TLS = &RouterTLS{CertResolver: certResolver}
 		}
 		httpRouters[name+"-router"] = router
-		httpServices[name+"-service"] = HTTPService{
-			LoadBalancer: LoadBalancer{
-				Servers: []Server{{URL: fmt.Sprintf("http://%s:%d", proxyHost, webPort)}},
+		lb := LoadBalancer{Servers: []Server{{URL: fmt.Sprintf("http://%s:%d", proxyHost, webPort)}}}
+		if useTransport {
+			lb.ServersTransport = transportName
+		}
+		httpServices[name+"-service"] = HTTPService{LoadBalancer: lb}
+	}
+
+	httpCfg := HTTPConfig{Routers: httpRouters, Services: httpServices}
+	if useTransport {
+		httpCfg.ServersTransports = map[string]ServersTransport{
+			transportName: {
+				ForwardingTimeouts: ForwardingTimeouts{
+					DialTimeout:           timeouts.DialTimeout,
+					ResponseHeaderTimeout: timeouts.ResponseHeaderTimeout,
+					IdleConnTimeout:       timeouts.IdleConnTimeout,
+				},
 			},
 		}
 	}
-
-	cfg := TraefikConfig{HTTP: HTTPConfig{Routers: httpRouters, Services: httpServices}}
+	cfg := TraefikConfig{HTTP: httpCfg}
 	if len(tcpRouters) > 0 {
 		cfg.TCP = &TCPConfig{Routers: tcpRouters, Services: tcpServices}
 	}
