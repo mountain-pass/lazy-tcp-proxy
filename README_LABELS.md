@@ -30,7 +30,7 @@ Add these labels to any container you want proxied/managed:
 | `lazy-tcp-proxy.http-healthcheck` | No | URL to poll after a cold start — proxy waits for a 2xx response before forwarding TCP traffic. Supports `{{container}}` placeholder (see [HTTP Health Check](#http-health-check)) |
 | `lazy-tcp-proxy.tls` | No | Set to `true` to wrap the listener with TLS using a shared self-signed certificate. Works with any TCP protocol, not only HTTP (see [TLS Termination](#tls-termination)) |
 | `lazy-tcp-proxy.api-key` | No | Comma-separated list of accepted values for the `X-API-Key` header. Any matching key is accepted. Missing or incorrect key → `401 Unauthorized`. The header is stripped before forwarding (see [API Key Authentication](#api-key-authentication)) |
-| `lazy-tcp-proxy.basic-auth` | No | Comma-separated list of `user:password` credentials. Any matching credential is accepted via `Authorization: Basic`. Missing or incorrect credentials → `401 Unauthorized` with `WWW-Authenticate`. The header is stripped before forwarding (see [Basic Auth Authentication](#basic-auth-authentication)) |
+| `lazy-tcp-proxy.basic-auth` | No | Comma-separated list of `user:hashedpassword` credentials in htpasswd bcrypt format. Any matching credential is accepted via `Authorization: Basic`. Missing or incorrect credentials → `401 Unauthorized` with `WWW-Authenticate`. The header is stripped before forwarding (see [Basic Auth Authentication](#basic-auth-authentication)) |
 | `lazy-tcp-proxy.traefik-hosts` | No | Comma-separated `<domain>:<listen_port>` pairs — exposes these mappings via `GET /traefik` for Traefik's HTTP provider (see [Traefik Integration](#traefik-integration)) |
 | `lazy-tcp-proxy.traefik-tcp-hosts` | No | Comma-separated `<domain>:<listen_port>` pairs — generates Traefik TCP SNI routers on the `websecure` entrypoint (see [TCP SNI routing](#tcp-sni-routing-traefik-tcp-hosts)) |
 
@@ -523,7 +523,14 @@ annotations:
 
 Set `lazy-tcp-proxy.basic-auth` to require HTTP Basic Auth credentials on every **HTTP** request. This allows clients to authenticate using credentials embedded in the URL (e.g. `https://nick:somepassword@myservice.com`), which the HTTP client automatically converts to an `Authorization: Basic <base64>` header.
 
-Multiple `user:password` pairs can be supplied as a comma-separated list — any matching credential is accepted (useful for per-user credentials or rotation).
+Passwords are stored as **bcrypt hashes** (htpasswd format) — never in cleartext. Generate entries with:
+
+```sh
+docker run --rm --entrypoint htpasswd httpd:2 -Bbn nick somepassword
+# outputs: nick:$2y$05$...
+```
+
+Multiple `user:hashedpassword` entries can be supplied as a comma-separated list — any matching credential is accepted (useful for per-user credentials or rotation).
 
 - If the header is missing or no credential matches → the proxy responds with `HTTP/1.1 401 Unauthorized` (including `WWW-Authenticate: Basic realm="lazy-tcp-proxy"`) and closes the connection.
 - If a credential matches → the proxy strips the `Authorization` header before forwarding the request to the container.
@@ -532,14 +539,14 @@ Multiple `user:password` pairs can be supplied as a comma-separated list — any
 labels:
   - "lazy-tcp-proxy.enabled=true"
   - "lazy-tcp-proxy.ports=9000:80"
-  - "lazy-tcp-proxy.basic-auth=nick:somepassword"
+  - "lazy-tcp-proxy.basic-auth=nick:$2y$05$examplehashedpassword"
 ```
 
 **Multiple credentials:**
 
 ```yaml
 labels:
-  - "lazy-tcp-proxy.basic-auth=nick:somepassword,alice:otherpassword"
+  - "lazy-tcp-proxy.basic-auth=nick:$2y$05$hash1,alice:$2y$05$hash2"
 ```
 
 **Client examples:**
@@ -560,7 +567,7 @@ curl http://localhost:9000/
 ```yaml
 labels:
   - "lazy-tcp-proxy.tls=true"
-  - "lazy-tcp-proxy.basic-auth=nick:somepassword"
+  - "lazy-tcp-proxy.basic-auth=nick:$2y$05$examplehashedpassword"
 ```
 
 ```sh
@@ -575,7 +582,7 @@ curl -k https://nick:somepassword@localhost:9443/
 annotations:
   lazy-tcp-proxy.enabled: "true"
   lazy-tcp-proxy.ports: "9000:80"
-  lazy-tcp-proxy.basic-auth: "nick:somepassword,alice:otherpassword"
+  lazy-tcp-proxy.basic-auth: "nick:$2y$05$hash1,alice:$2y$05$hash2"
 ```
 
 ---

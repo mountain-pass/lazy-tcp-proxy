@@ -13,8 +13,19 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/crypto/bcrypt"
+
 	"github.com/mountain-pass/lazy-tcp-proxy/internal/types"
 )
+
+// mustHashPassword generates a bcrypt hash for the given password (test helper).
+func mustHashPassword(password string) string {
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.MinCost)
+	if err != nil {
+		panic(err)
+	}
+	return string(hash)
+}
 
 // ---- effectiveTimeout ----
 
@@ -1336,7 +1347,7 @@ func TestHandleHTTPProxy_BasicAuth_CorrectCredentials(t *testing.T) {
 
 	ts := &targetState{
 		info:      types.TargetInfo{ContainerName: "svc"},
-		basicAuth: []string{"nick:somepassword"},
+		basicAuth: []string{"nick:" + mustHashPassword("somepassword")},
 	}
 	s := newTestServer()
 
@@ -1372,7 +1383,7 @@ func TestHandleHTTPProxy_BasicAuth_MissingHeader(t *testing.T) {
 
 	ts := &targetState{
 		info:      types.TargetInfo{ContainerName: "svc"},
-		basicAuth: []string{"nick:somepassword"},
+		basicAuth: []string{"nick:" + mustHashPassword("somepassword")},
 	}
 	s := newTestServer()
 
@@ -1409,7 +1420,7 @@ func TestHandleHTTPProxy_BasicAuth_WrongCredentials(t *testing.T) {
 
 	ts := &targetState{
 		info:      types.TargetInfo{ContainerName: "svc"},
-		basicAuth: []string{"nick:somepassword"},
+		basicAuth: []string{"nick:" + mustHashPassword("somepassword")},
 	}
 	s := newTestServer()
 
@@ -1451,7 +1462,7 @@ func TestHandleHTTPProxy_BasicAuth_MultipleCredentials_AnyMatch(t *testing.T) {
 
 	ts := &targetState{
 		info:      types.TargetInfo{ContainerName: "svc"},
-		basicAuth: []string{"nick:pass1", "alice:otherpass"},
+		basicAuth: []string{"nick:" + mustHashPassword("pass1"), "alice:" + mustHashPassword("otherpass")},
 	}
 	s := newTestServer()
 
@@ -1496,7 +1507,7 @@ func TestHandleHTTPProxy_BasicAuth_HeaderStripped(t *testing.T) {
 
 	ts := &targetState{
 		info:      types.TargetInfo{ContainerName: "svc"},
-		basicAuth: []string{"nick:somepassword"},
+		basicAuth: []string{"nick:" + mustHashPassword("somepassword")},
 	}
 	s := newTestServer()
 

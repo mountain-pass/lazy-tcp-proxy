@@ -63,7 +63,7 @@ services:
 #    api_key:
 #      - "your-secret-key"
 #    basic_auth:
-#      - "user:password"
+#      - "user:$2y$12$hashedpassword"   # htpasswd bcrypt hash (use: docker run --rm --entrypoint htpasswd httpd:2 -Bbn user password)
 #    traefik_hosts:
 #      - "myapp.localhost:9000"
 #    traefik_tcp_hosts:
@@ -120,8 +120,8 @@ services:
     tls: true                     # wrap listener with TLS (shared self-signed cert)
     api_key:                      # require X-API-Key header matching any listed value
       - "your-secret-key"
-    basic_auth:                   # require Authorization: Basic matching any listed user:password
-      - "nick:somepassword"
+    basic_auth:                   # require Authorization: Basic; passwords must be bcrypt hashes (htpasswd format)
+      - "nick:$2y$12$..."         # generate with: docker run --rm --entrypoint htpasswd httpd:2 -Bbn nick somepassword
     traefik_hosts:
       - "myapp.localhost:9000"    # domain:listen_port pairs for Traefik HTTP provider
     traefik_tcp_hosts:
