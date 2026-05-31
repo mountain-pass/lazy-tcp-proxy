@@ -162,6 +162,26 @@ func resolveTraefikCertResolver() string {
 	return "myresolver"
 }
 
+func resolveTraefikTransportTimeouts() *traefikpkg.TransportTimeouts {
+	dial := os.Getenv("TRAEFIK_DIAL_TIMEOUT")
+	if dial == "" {
+		dial = "30s"
+	}
+	rht := os.Getenv("TRAEFIK_RESPONSE_HEADER_TIMEOUT")
+	if rht == "" {
+		rht = "15m"
+	}
+	idle := os.Getenv("TRAEFIK_IDLE_CONN_TIMEOUT")
+	if idle == "" {
+		idle = "90s"
+	}
+	return &traefikpkg.TransportTimeouts{
+		DialTimeout:           dial,
+		ResponseHeaderTimeout: rht,
+		IdleConnTimeout:       idle,
+	}
+}
+
 const statusDashboardHTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -322,7 +342,7 @@ const statusDashboardHTML = `<!DOCTYPE html>
 </body>
 </html>`
 
-func runStatusServer(ctx context.Context, srv *proxy.ProxyServer, port int, traefikProxyHost, traefikEntryPoint, traefikCertResolver, webHost string, webPort int) {
+func runStatusServer(ctx context.Context, srv *proxy.ProxyServer, port int, traefikProxyHost, traefikEntryPoint, traefikCertResolver, webHost string, webPort int, traefikTimeouts *traefikpkg.TransportTimeouts) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
 		var ms runtime.MemStats
@@ -347,7 +367,7 @@ func runStatusServer(ctx context.Context, srv *proxy.ProxyServer, port int, trae
 			}
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(traefikpkg.BuildConfig(snaps, traefikProxyHost, traefikEntryPoint, traefikCertResolver, webHost, webPort)) //nolint:errcheck
+		json.NewEncoder(w).Encode(traefikpkg.BuildConfig(snaps, traefikProxyHost, traefikEntryPoint, traefikCertResolver, webHost, webPort, traefikTimeouts)) //nolint:errcheck
 	})
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -525,6 +545,7 @@ func main() {
 	traefikProxyHost := resolveTraefikProxyHost()
 	traefikEntryPoint := resolveTraefikEntryPoint()
 	traefikCertResolver := resolveTraefikCertResolver()
+	traefikTimeouts := resolveTraefikTransportTimeouts()
 	if webPort == 0 {
 		log.Println("web server: disabled (WEB_PORT=0)")
 	} else {
@@ -533,9 +554,10 @@ func main() {
 		} else {
 			log.Printf("web server: listening on :%d (WEB_HOST not set — no Traefik route for web endpoint)", webPort)
 		}
-		log.Printf("traefik provider: GET /traefik available (TRAEFIK_PROXY_HOST=%s, TRAEFIK_ENTRYPOINT=%q, TRAEFIK_CERTRESOLVER=%q)",
-			traefikProxyHost, traefikEntryPoint, traefikCertResolver)
-		runStatusServer(ctx, srv, webPort, traefikProxyHost, traefikEntryPoint, traefikCertResolver, webHost, webPort)
+		log.Printf("traefik provider: GET /traefik available (TRAEFIK_PROXY_HOST=%s, TRAEFIK_ENTRYPOINT=%q, TRAEFIK_CERTRESOLVER=%q, TRAEFIK_DIAL_TIMEOUT=%s, TRAEFIK_RESPONSE_HEADER_TIMEOUT=%s, TRAEFIK_IDLE_CONN_TIMEOUT=%s)",
+			traefikProxyHost, traefikEntryPoint, traefikCertResolver,
+			traefikTimeouts.DialTimeout, traefikTimeouts.ResponseHeaderTimeout, traefikTimeouts.IdleConnTimeout)
+		runStatusServer(ctx, srv, webPort, traefikProxyHost, traefikEntryPoint, traefikCertResolver, webHost, webPort, traefikTimeouts)
 	}
 
 	// Load dynamic config file

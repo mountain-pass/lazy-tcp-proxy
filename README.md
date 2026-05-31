@@ -98,6 +98,9 @@ Configure via environment variables:
 | `TRAEFIK_PROXY_HOST`  | Hostname/IP Traefik uses to reach lazy-tcp-proxy's listen ports (used in `/traefik` service URLs) | `lazy-tcp-proxy` |
 | `TRAEFIK_ENTRYPOINT`  | Traefik entry point added to every generated router; set to `""` to omit | `websecure` |
 | `TRAEFIK_CERTRESOLVER` | Cert resolver added to every generated router's `tls.certResolver`; set to `""` to omit | `myresolver` |
+| `TRAEFIK_DIAL_TIMEOUT` | Upstream dial timeout emitted in the `lazy-transport` ServersTransport in `/traefik`. Use Go duration syntax (e.g. `30s`, `1m`). Set to `""` together with the other two timeout vars to suppress the ServersTransport entirely | `30s` |
+| `TRAEFIK_RESPONSE_HEADER_TIMEOUT` | Maximum time to wait for an upstream response header. Increase this for services that do long-running uploads (e.g. a Docker registry). Use Go duration syntax (e.g. `15m`, `0` for no limit) | `15m` |
+| `TRAEFIK_IDLE_CONN_TIMEOUT` | Maximum time an idle keep-alive connection remains open to the upstream. Use Go duration syntax (e.g. `90s`) | `90s` |
 | `COMPOSE_DIR`         | Directory scanned for compose files and image archives when re-provisioning a missing container (see [Compose Re-provisioning](#compose-re-provisioning)) | `<dir of CONFIG_PATH>/compose` |
 | `METRICS_POSTGRES_URL` | PostgreSQL connection URL for metrics storage (see [PostgreSQL Metrics](#postgresql-metrics)). When set, per-port stats are accumulated and flushed to a `proxy_metrics` table every minute. When absent, metrics storage is disabled and no PostgreSQL connection is made | *(none — disabled)* |
 
