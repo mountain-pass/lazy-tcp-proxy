@@ -14,7 +14,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/containerd/errdefs"
 	"github.com/moby/moby/api/types/events"
+	"github.com/moby/moby/api/types/swarm"
 	"github.com/moby/moby/client"
 	"github.com/mountain-pass/lazy-tcp-proxy/internal/types"
 	cron "github.com/robfig/cron/v3"
@@ -22,11 +24,19 @@ import (
 
 // Manager wraps the Docker client with proxy-specific logic.
 type Manager struct {
-	cli        *client.Client
-	selfID     string
-	mu         sync.Mutex
-	joinedNets map[string]string // networkID → name
+	cli           *client.Client
+	selfID        string
+	mu            sync.Mutex
+	joinedNets    map[string]string // networkID → name
+	swarmServices map[string]int    // serviceID → desiredReplicas
+	configOnlyMu  sync.RWMutex
+	configOnlyIDs map[string]string // container name → registered ContainerID (config-only targets)
+	composeDir    string            // directory scanned for compose files and image archives
 }
+
+// SetComposeDir sets the directory in which compose files and image archives are looked up
+// when re-provisioning a missing container. An empty string disables re-provisioning.
+func (m *Manager) SetComposeDir(dir string) { m.composeDir = dir }
 
 // NewManager creates a new Manager. The Docker socket path can be set via
 // DOCKER_SOCK (e.g. /var/run/docker.sock). Falls back to DOCKER_HOST, then the
@@ -41,7 +51,7 @@ func NewManager() (*Manager, error) {
 		return nil, fmt.Errorf("creating docker client: %w", err)
 	}
 
-	m := &Manager{cli: cli, joinedNets: make(map[string]string)}
+	m := &Manager{cli: cli, joinedNets: make(map[string]string), swarmServices: make(map[string]int), configOnlyIDs: make(map[string]string)}
 	m.selfID = m.SelfContainerID()
 	if m.selfID != "" {
 		log.Printf("docker: detected self container ID: %s", m.selfID)
@@ -202,6 +212,7 @@ func (m *Manager) containerToTargetInfo(ctx context.Context, containerID string)
 
 	cronStart := parseCronLabel(name, "lazy-tcp-proxy.cron-start", inspect.Config.Labels["lazy-tcp-proxy.cron-start"])
 	cronStop := parseCronLabel(name, "lazy-tcp-proxy.cron-stop", inspect.Config.Labels["lazy-tcp-proxy.cron-stop"])
+	availability := types.ParseAvailabilityLabel(name, inspect.Config.Labels["lazy-tcp-proxy.availability"])
 
 	httpHealthCheck := types.ParseHTTPHealthCheckLabel(name, inspect.Config.Labels["lazy-tcp-proxy.http-healthcheck"])
 	if httpHealthCheck != "" {
@@ -227,6 +238,19 @@ func (m *Manager) containerToTargetInfo(ctx context.Context, containerID string)
 		inspect.State.Health.Status != "" &&
 		inspect.State.Health.Status != "none"
 
+	https := strings.TrimSpace(inspect.Config.Labels["lazy-tcp-proxy.tls"]) == "true"
+	apiKey := types.ParseAuthList("lazy-tcp-proxy.api-key", inspect.Config.Labels["lazy-tcp-proxy.api-key"])
+	basicAuth := types.ParseAuthList("lazy-tcp-proxy.basic-auth", inspect.Config.Labels["lazy-tcp-proxy.basic-auth"])
+
+	var traefikHosts []string
+	if v := strings.TrimSpace(inspect.Config.Labels["lazy-tcp-proxy.traefik-hosts"]); v != "" {
+		traefikHosts = types.ParseTraefikHosts("lazy-tcp-proxy.traefik-hosts", v)
+	}
+	var traefikTCPHosts []string
+	if v := strings.TrimSpace(inspect.Config.Labels["lazy-tcp-proxy.traefik-tcp-hosts"]); v != "" {
+		traefikTCPHosts = types.ParseTraefikHosts("lazy-tcp-proxy.traefik-tcp-hosts", v)
+	}
+
 	return types.TargetInfo{
 		ContainerID:     containerID,
 		ContainerName:   name,
@@ -244,6 +268,12 @@ func (m *Manager) containerToTargetInfo(ctx context.Context, containerID string)
 		CronStop:        cronStop,
 		HTTPHealthCheck: httpHealthCheck,
 		HasHealthCheck:  hasHealthCheck,
+		TLS:             https,
+		APIKey:          apiKey,
+		BasicAuth:       basicAuth,
+		TraefikHosts:    traefikHosts,
+		TraefikTCPHosts: traefikTCPHosts,
+		Availability:    availability,
 	}, nil
 }
 
@@ -304,6 +334,27 @@ func (m *Manager) JoinNetworks(ctx context.Context, networkIDs []string) ([]stri
 	return joined, nil
 }
 
+// JoinNetworksForContainerNames inspects each container by name and joins its networks.
+// Containers that do not exist are silently skipped. This is used to connect the proxy
+// to networks for config-only targets that lack the lazy-tcp-proxy.enabled label.
+func (m *Manager) JoinNetworksForContainerNames(ctx context.Context, names []string) {
+	for _, name := range names {
+		result, err := m.cli.ContainerInspect(ctx, name, client.ContainerInspectOptions{})
+		if err != nil {
+			continue
+		}
+		var networkIDs []string
+		for _, ep := range result.Container.NetworkSettings.Networks {
+			if ep.NetworkID != "" {
+				networkIDs = append(networkIDs, ep.NetworkID)
+			}
+		}
+		if _, err := m.JoinNetworks(ctx, networkIDs); err != nil {
+			log.Printf("docker: failed to join networks for \033[33m%s\033[0m: %v", name, err)
+		}
+	}
+}
+
 // LeaveNetworks disconnects the proxy container from all networks it joined at runtime.
 func (m *Manager) LeaveNetworks(ctx context.Context) {
 	if m.selfID == "" {
@@ -328,6 +379,41 @@ func (m *Manager) LeaveNetworks(ctx context.Context) {
 // Shutdown implements the backendManager interface by leaving all joined networks.
 func (m *Manager) Shutdown(ctx context.Context) {
 	m.LeaveNetworks(ctx)
+}
+
+// DefaultTargetID returns name as-is. The Docker API accepts container names
+// wherever container IDs are expected, so no lookup is required.
+func (m *Manager) DefaultTargetID(name string) string { return name }
+
+// InspectRunning reports whether the container identified by targetID is running
+// and whether it exists at all. Returns (false, false, nil) when the container
+// is not found; returns (false, false, err) for other Docker API errors.
+func (m *Manager) InspectRunning(ctx context.Context, targetID string) (running, exists bool, err error) {
+	result, inspectErr := m.cli.ContainerInspect(ctx, targetID, client.ContainerInspectOptions{})
+	if inspectErr != nil {
+		if errdefs.IsNotFound(inspectErr) {
+			return false, false, nil
+		}
+		return false, false, fmt.Errorf("inspecting container: %w", inspectErr)
+	}
+	return result.Container.State.Running, true, nil
+}
+
+// SetConfigOnlyNames stores the name→registeredContainerID mapping for
+// containers managed via config.yaml only (no lazy-tcp-proxy.enabled label).
+// WatchEvents uses this map to route start/stop events for those containers.
+func (m *Manager) SetConfigOnlyNames(nameToID map[string]string) {
+	m.configOnlyMu.Lock()
+	m.configOnlyIDs = nameToID
+	m.configOnlyMu.Unlock()
+}
+
+// getConfigOnlyID returns the registered ContainerID for a config-only
+// container by name, or "" if not found.
+func (m *Manager) getConfigOnlyID(name string) string {
+	m.configOnlyMu.RLock()
+	defer m.configOnlyMu.RUnlock()
+	return m.configOnlyIDs[name]
 }
 
 // warnSharedDefaultNetworks logs a warning if any of the container's networks is a
@@ -396,10 +482,19 @@ func (m *Manager) WaitUntilHealthy(ctx context.Context, containerID, name string
 	return fmt.Errorf("container \033[33m%s\033[0m not healthy after %s", name, timeout)
 }
 
-// EnsureRunning starts the container if it is not already running.
-func (m *Manager) EnsureRunning(ctx context.Context, containerID string) error {
-	result, err := m.cli.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
+// EnsureRunning starts the container (or scales up the swarm service) if not already running.
+func (m *Manager) EnsureRunning(ctx context.Context, targetID string) error {
+	if desiredReplicas, ok := m.isSwarmService(targetID); ok {
+		return m.ensureServiceRunning(ctx, targetID, desiredReplicas)
+	}
+	result, err := m.cli.ContainerInspect(ctx, targetID, client.ContainerInspectOptions{})
 	if err != nil {
+		if errdefs.IsNotFound(err) {
+			attempted, reproErr := m.reprovisionWithCompose(ctx, targetID)
+			if attempted {
+				return reproErr
+			}
+		}
 		return fmt.Errorf("inspecting container: %w", err)
 	}
 
@@ -409,7 +504,7 @@ func (m *Manager) EnsureRunning(ctx context.Context, containerID string) error {
 
 	name := strings.TrimPrefix(result.Container.Name, "/")
 	log.Printf("docker: starting container \033[33m%s\033[0m", name)
-	if _, err := m.cli.ContainerStart(ctx, containerID, client.ContainerStartOptions{}); err != nil {
+	if _, err := m.cli.ContainerStart(ctx, targetID, client.ContainerStartOptions{}); err != nil {
 		if strings.Contains(err.Error(), "network") && strings.Contains(err.Error(), "not found") {
 			log.Printf("docker: container %q has a stale network reference; recreate the container to fix this (docker rm %s && docker compose up -d)", name, name)
 		}
@@ -420,21 +515,27 @@ func (m *Manager) EnsureRunning(ctx context.Context, containerID string) error {
 	return nil
 }
 
-// StopContainer stops the given container with a 10-second timeout.
-func (m *Manager) StopContainer(ctx context.Context, containerID string, containerName string) error {
+// StopContainer stops the container (or scales the swarm service to 0) with idle-timeout semantics.
+func (m *Manager) StopContainer(ctx context.Context, targetID string, targetName string) error {
+	if _, ok := m.isSwarmService(targetID); ok {
+		return m.stopService(ctx, targetID, targetName)
+	}
 	timeout := 10
-	log.Printf("docker: stopping container \033[33m%s\033[0m (idle timeout)", containerName)
-	if _, err := m.cli.ContainerStop(ctx, containerID, client.ContainerStopOptions{Timeout: &timeout}); err != nil {
+	log.Printf("docker: stopping container \033[33m%s\033[0m (idle timeout)", targetName)
+	if _, err := m.cli.ContainerStop(ctx, targetID, client.ContainerStopOptions{Timeout: &timeout}); err != nil {
 		return fmt.Errorf("stopping container: %w", err)
 	}
-	log.Printf("docker: container \033[33m%s\033[0m stopped", containerName)
+	log.Printf("docker: container \033[33m%s\033[0m stopped", targetName)
 	return nil
 }
 
-// GetUpstreamHost returns the IP address of the container, preferring the given
-// networkID. Falls back to any available network IP.
-func (m *Manager) GetUpstreamHost(ctx context.Context, containerID, preferNetworkID string) (string, error) {
-	result, err := m.cli.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
+// GetUpstreamHost returns the upstream IP for a container or swarm service,
+// preferring the given networkID.
+func (m *Manager) GetUpstreamHost(ctx context.Context, targetID, preferNetworkID string) (string, error) {
+	if _, ok := m.isSwarmService(targetID); ok {
+		return m.getServiceUpstreamHost(ctx, targetID, preferNetworkID)
+	}
+	result, err := m.cli.ContainerInspect(ctx, targetID, client.ContainerInspectOptions{})
 	if err != nil {
 		return "", fmt.Errorf("inspecting container: %w", err)
 	}
@@ -456,7 +557,413 @@ func (m *Manager) GetUpstreamHost(ctx context.Context, containerID, preferNetwor
 		}
 	}
 
-	return "", fmt.Errorf("no IP address found for container %s", containerID[:12])
+	return "", fmt.Errorf("no IP address found for container %s", targetID[:12])
+}
+
+// isSwarmService reports whether targetID is a registered swarm service.
+// Returns (desiredReplicas, true) when found, (0, false) otherwise.
+func (m *Manager) isSwarmService(targetID string) (int, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n, ok := m.swarmServices[targetID]
+	return n, ok
+}
+
+func (m *Manager) registerSwarmService(serviceID string, replicas int) {
+	m.mu.Lock()
+	m.swarmServices[serviceID] = replicas
+	m.mu.Unlock()
+}
+
+func (m *Manager) unregisterSwarmService(serviceID string) {
+	m.mu.Lock()
+	delete(m.swarmServices, serviceID)
+	m.mu.Unlock()
+}
+
+// ensureServiceRunning scales the swarm service to desiredReplicas if currently at 0.
+func (m *Manager) ensureServiceRunning(ctx context.Context, serviceID string, desiredReplicas int) error {
+	result, err := m.cli.ServiceInspect(ctx, serviceID, client.ServiceInspectOptions{})
+	if err != nil {
+		return fmt.Errorf("inspecting service: %w", err)
+	}
+	svc := result.Service
+	if svc.Spec.Mode.Replicated == nil {
+		return fmt.Errorf("service %s is not a replicated service; only replicated services are supported", svc.Spec.Name)
+	}
+	if svc.Spec.Mode.Replicated.Replicas != nil && *svc.Spec.Mode.Replicated.Replicas > 0 {
+		return nil // already scaled up
+	}
+	name := svc.Spec.Name
+	log.Printf("docker: scaling up service \033[33m%s\033[0m to %d replicas", name, desiredReplicas)
+	n := uint64(desiredReplicas)
+	svc.Spec.Mode.Replicated.Replicas = &n
+	if _, err := m.cli.ServiceUpdate(ctx, serviceID, client.ServiceUpdateOptions{
+		Version: svc.Version,
+		Spec:    svc.Spec,
+	}); err != nil {
+		return fmt.Errorf("scaling up service: %w", err)
+	}
+	log.Printf("docker: service \033[33m%s\033[0m scaled to %d replicas", name, desiredReplicas)
+	return nil
+}
+
+// stopService scales the swarm service to 0 replicas.
+func (m *Manager) stopService(ctx context.Context, serviceID, serviceName string) error {
+	result, err := m.cli.ServiceInspect(ctx, serviceID, client.ServiceInspectOptions{})
+	if err != nil {
+		return fmt.Errorf("inspecting service: %w", err)
+	}
+	svc := result.Service
+	if svc.Spec.Mode.Replicated == nil {
+		return fmt.Errorf("service %s is not a replicated service", serviceName)
+	}
+	if svc.Spec.Mode.Replicated.Replicas != nil && *svc.Spec.Mode.Replicated.Replicas == 0 {
+		return nil // already at zero
+	}
+	log.Printf("docker: scaling down service \033[33m%s\033[0m (idle timeout)", serviceName)
+	n := uint64(0)
+	svc.Spec.Mode.Replicated.Replicas = &n
+	if _, err := m.cli.ServiceUpdate(ctx, serviceID, client.ServiceUpdateOptions{
+		Version: svc.Version,
+		Spec:    svc.Spec,
+	}); err != nil {
+		return fmt.Errorf("scaling down service: %w", err)
+	}
+	log.Printf("docker: service \033[33m%s\033[0m scaled to zero", serviceName)
+	return nil
+}
+
+// getServiceUpstreamHost returns the VIP of the swarm service on a shared overlay network.
+func (m *Manager) getServiceUpstreamHost(ctx context.Context, serviceID, preferNetworkID string) (string, error) {
+	result, err := m.cli.ServiceInspect(ctx, serviceID, client.ServiceInspectOptions{})
+	if err != nil {
+		return "", fmt.Errorf("inspecting service: %w", err)
+	}
+	vips := result.Service.Endpoint.VirtualIPs
+
+	// Try the preferred network first
+	if preferNetworkID != "" {
+		for _, vip := range vips {
+			if vip.NetworkID == preferNetworkID && vip.Addr.IsValid() {
+				return vip.Addr.Addr().String(), nil
+			}
+		}
+	}
+
+	// Fallback: any VIP on a network the proxy has joined
+	m.mu.Lock()
+	joinedNets := m.joinedNets
+	m.mu.Unlock()
+	for _, vip := range vips {
+		if _, joined := joinedNets[vip.NetworkID]; joined && vip.Addr.IsValid() {
+			return vip.Addr.Addr().String(), nil
+		}
+	}
+
+	// Last resort: any non-empty VIP
+	for _, vip := range vips {
+		if vip.Addr.IsValid() {
+			return vip.Addr.Addr().String(), nil
+		}
+	}
+
+	prefix := serviceID
+	if len(prefix) > 12 {
+		prefix = prefix[:12]
+	}
+	return "", fmt.Errorf("no VIP found for service %s", prefix)
+}
+
+// DiscoverServices lists swarm services labelled lazy-tcp-proxy.enabled=true,
+// joins their overlay networks, and calls handler.RegisterTarget for each.
+// It is a no-op (with a log) when swarm mode is not active.
+func (m *Manager) DiscoverServices(ctx context.Context, handler types.TargetHandler) error {
+	infoResult, err := m.cli.Info(ctx, client.InfoOptions{})
+	if err != nil {
+		return fmt.Errorf("getting docker info: %w", err)
+	}
+	if infoResult.Info.Swarm.LocalNodeState != swarm.LocalNodeStateActive {
+		log.Printf("docker: swarm mode not active; skipping service discovery")
+		return nil
+	}
+
+	f := make(client.Filters)
+	f.Add("label", "lazy-tcp-proxy.enabled=true")
+
+	svcResult, err := m.cli.ServiceList(ctx, client.ServiceListOptions{Filters: f, Status: true})
+	if err != nil {
+		return fmt.Errorf("listing services: %w", err)
+	}
+
+	var foundNames []string
+	var allNetworks []string
+	for _, svc := range svcResult.Items {
+		info, err := m.serviceToTargetInfo(svc)
+		if err != nil {
+			log.Printf("docker: discover: skipping service %s: %v", svc.Spec.Name, err)
+			continue
+		}
+
+		m.registerSwarmService(svc.ID, info.DesiredReplicas)
+
+		joined, err := m.JoinNetworks(ctx, info.NetworkIDs)
+		if err != nil {
+			log.Printf("docker: discover: failed to join networks for service \033[33m%s\033[0m: %v", info.ContainerName, err)
+		}
+		allNetworks = append(allNetworks, joined...)
+
+		handler.RegisterTarget(info)
+		foundNames = append(foundNames, info.ContainerName)
+	}
+
+	if len(foundNames) == 0 {
+		log.Printf("docker: init: no proxy services found")
+	} else {
+		log.Printf("docker: init: found services: \033[33m%s\033[0m", strings.Join(foundNames, ", "))
+	}
+	if len(allNetworks) > 0 {
+		log.Printf("docker: init: joined networks (services): \033[32m%s\033[0m", strings.Join(allNetworks, ", "))
+	}
+
+	return nil
+}
+
+// serviceToTargetInfo converts a swarm.Service into a TargetInfo.
+// Returns an error if the service lacks required labels (scale, ports).
+func (m *Manager) serviceToTargetInfo(svc swarm.Service) (types.TargetInfo, error) {
+	labels := svc.Spec.Labels
+	name := svc.Spec.Name
+
+	scaleStr, hasScale := labels["lazy-tcp-proxy.scale"]
+	if !hasScale || strings.TrimSpace(scaleStr) == "" {
+		return types.TargetInfo{}, fmt.Errorf("missing label lazy-tcp-proxy.scale")
+	}
+	scale, err := strconv.Atoi(strings.TrimSpace(scaleStr))
+	if err != nil || scale < 1 {
+		return types.TargetInfo{}, fmt.Errorf("invalid lazy-tcp-proxy.scale %q: must be a positive integer ≥ 1", scaleStr)
+	}
+
+	portsStr, hasPorts := labels["lazy-tcp-proxy.ports"]
+	udpPortsStr, hasUDPPorts := labels["lazy-tcp-proxy.udp-ports"]
+	if !hasPorts && (!hasUDPPorts || udpPortsStr == "") {
+		return types.TargetInfo{}, fmt.Errorf("missing label lazy-tcp-proxy.ports or lazy-tcp-proxy.udp-ports")
+	}
+
+	var ports []types.PortMapping
+	if hasPorts {
+		ports = types.ParsePortMappings("lazy-tcp-proxy.ports", portsStr)
+		if len(ports) == 0 {
+			return types.TargetInfo{}, fmt.Errorf("label lazy-tcp-proxy.ports contains no valid port mappings")
+		}
+	}
+	var udpPorts []types.PortMapping
+	if hasUDPPorts && udpPortsStr != "" {
+		udpPorts = types.ParsePortMappings("lazy-tcp-proxy.udp-ports", udpPortsStr)
+	}
+
+	// Network IDs come from the service's VirtualIPs (one per attached overlay network)
+	var networkIDs []string
+	for _, vip := range svc.Endpoint.VirtualIPs {
+		if vip.NetworkID != "" {
+			networkIDs = append(networkIDs, vip.NetworkID)
+		}
+	}
+
+	var allowList, blockList []net.IPNet
+	if v, ok := labels["lazy-tcp-proxy.allow-list"]; ok && v != "" {
+		allowList = types.ParseIPList("lazy-tcp-proxy.allow-list", v)
+	}
+	if v, ok := labels["lazy-tcp-proxy.block-list"]; ok && v != "" {
+		blockList = types.ParseIPList("lazy-tcp-proxy.block-list", v)
+	}
+
+	idleTimeout := types.ParseIdleTimeoutLabel(name, labels["lazy-tcp-proxy.idle-timeout-secs"])
+	startTimeout := types.ParseStartTimeoutLabel(name, labels["lazy-tcp-proxy.start-timeout-secs"])
+
+	var webhookURL string
+	if v := strings.TrimSpace(labels["lazy-tcp-proxy.webhook-url"]); v != "" {
+		if _, err := url.ParseRequestURI(v); err != nil {
+			log.Printf("docker: service %s: ignoring invalid webhook URL %q: %v", name, v, err)
+		} else {
+			webhookURL = v
+		}
+	}
+
+	var dependants []string
+	if v := strings.TrimSpace(labels["lazy-tcp-proxy.dependants"]); v != "" {
+		dependants = types.ParseDependants(v)
+	}
+
+	cronStart := parseCronLabel(name, "lazy-tcp-proxy.cron-start", labels["lazy-tcp-proxy.cron-start"])
+	cronStop := parseCronLabel(name, "lazy-tcp-proxy.cron-stop", labels["lazy-tcp-proxy.cron-stop"])
+	httpHealthCheck := types.ParseHTTPHealthCheckLabel(name, labels["lazy-tcp-proxy.http-healthcheck"])
+
+	var traefikHosts []string
+	if v := strings.TrimSpace(labels["lazy-tcp-proxy.traefik-hosts"]); v != "" {
+		traefikHosts = types.ParseTraefikHosts("lazy-tcp-proxy.traefik-hosts", v)
+	}
+	var traefikTCPHosts []string
+	if v := strings.TrimSpace(labels["lazy-tcp-proxy.traefik-tcp-hosts"]); v != "" {
+		traefikTCPHosts = types.ParseTraefikHosts("lazy-tcp-proxy.traefik-tcp-hosts", v)
+	}
+
+	running := svc.ServiceStatus != nil && svc.ServiceStatus.RunningTasks > 0
+
+	return types.TargetInfo{
+		ContainerID:     svc.ID,
+		ContainerName:   name,
+		Ports:           ports,
+		UDPPorts:        udpPorts,
+		NetworkIDs:      networkIDs,
+		AllowList:       allowList,
+		BlockList:       blockList,
+		IdleTimeout:     idleTimeout,
+		StartTimeout:    startTimeout,
+		Running:         running,
+		WebhookURL:      webhookURL,
+		Dependants:      dependants,
+		CronStart:       cronStart,
+		CronStop:        cronStop,
+		HTTPHealthCheck: httpHealthCheck,
+		HasHealthCheck:  false,
+		DesiredReplicas: scale,
+		TraefikHosts:    traefikHosts,
+		TraefikTCPHosts: traefikTCPHosts,
+	}, nil
+}
+
+// NotifyTargets ensures any targets with DesiredReplicas > 0 are registered in
+// the swarm services map. Called after config overlay so YAML-only service
+// entries are included.
+func (m *Manager) NotifyTargets(targets []types.TargetInfo) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, info := range targets {
+		if info.DesiredReplicas > 0 {
+			m.swarmServices[info.ContainerID] = info.DesiredReplicas
+		}
+	}
+}
+
+// WatchServiceEvents subscribes to Docker swarm service events and notifies
+// the handler of create/update/remove actions. Reconnects with exponential
+// backoff on error.
+func (m *Manager) WatchServiceEvents(ctx context.Context, handler types.TargetHandler) {
+	backoff := time.Second
+	maxBackoff := 30 * time.Second
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		// Skip if swarm is not active (check each reconnect cycle)
+		infoResult, err := m.cli.Info(ctx, client.InfoOptions{})
+		if err != nil || infoResult.Info.Swarm.LocalNodeState != swarm.LocalNodeStateActive {
+			return // swarm not available; stop the goroutine silently
+		}
+
+		f := make(client.Filters)
+		f.Add("type", string(events.ServiceEventType))
+		f.Add("event", "create")
+		f.Add("event", "update")
+		f.Add("event", "remove")
+
+		eventsResult := m.cli.Events(ctx, client.EventsListOptions{Filters: f})
+
+		log.Printf("docker: watching service events...")
+		eventLoop := true
+		for eventLoop {
+			select {
+			case <-ctx.Done():
+				return
+			case err := <-eventsResult.Err:
+				if err != nil {
+					log.Printf("docker: service events error: %v; reconnecting in %s", err, backoff)
+					select {
+					case <-ctx.Done():
+						return
+					case <-time.After(backoff):
+					}
+					backoff *= 2
+					if backoff > maxBackoff {
+						backoff = maxBackoff
+					}
+					eventLoop = false
+				}
+			case msg := <-eventsResult.Messages:
+				backoff = time.Second
+				m.handleServiceEvent(ctx, msg, handler)
+			}
+		}
+	}
+}
+
+// handleServiceEvent processes a single swarm service event message.
+func (m *Manager) handleServiceEvent(ctx context.Context, msg events.Message, handler types.TargetHandler) {
+	svcName := msg.Actor.Attributes["name"]
+
+	switch msg.Action {
+	case "create":
+		if msg.Actor.Attributes["lazy-tcp-proxy.enabled"] != "true" {
+			log.Printf("docker: service event: service %s created but not proxied: missing label lazy-tcp-proxy.enabled=true", svcName)
+			return
+		}
+		result, err := m.cli.ServiceInspect(ctx, msg.Actor.ID, client.ServiceInspectOptions{InsertDefaults: true})
+		if err != nil {
+			log.Printf("docker: service event: could not inspect service %s: %v", svcName, err)
+			return
+		}
+		info, err := m.serviceToTargetInfo(result.Service)
+		if err != nil {
+			log.Printf("docker: service event: skipping service %s: %v", svcName, err)
+			return
+		}
+		log.Printf("docker: service event: service added: \033[33m%s\033[0m", svcName)
+		m.registerSwarmService(info.ContainerID, info.DesiredReplicas)
+		joined, err := m.JoinNetworks(ctx, info.NetworkIDs)
+		if err != nil {
+			log.Printf("docker: service event: failed to join networks for \033[33m%s\033[0m: %v", svcName, err)
+		}
+		for _, n := range joined {
+			log.Printf("docker: service event: joined network: \033[32m%s\033[0m", n)
+		}
+		handler.RegisterTarget(info)
+
+	case "update":
+		if _, known := m.isSwarmService(msg.Actor.ID); !known {
+			return // not a service we manage
+		}
+		result, err := m.cli.ServiceInspect(ctx, msg.Actor.ID, client.ServiceInspectOptions{InsertDefaults: true})
+		if err != nil {
+			log.Printf("docker: service event: could not inspect service %s: %v", svcName, err)
+			return
+		}
+		svc := result.Service
+		var desiredReplicas uint64
+		if svc.Spec.Mode.Replicated != nil && svc.Spec.Mode.Replicated.Replicas != nil {
+			desiredReplicas = *svc.Spec.Mode.Replicated.Replicas
+		}
+		var runningTasks uint64
+		if svc.ServiceStatus != nil {
+			runningTasks = svc.ServiceStatus.RunningTasks
+		}
+		if desiredReplicas == 0 && runningTasks == 0 {
+			log.Printf("docker: service event: service stopped externally: \033[33m%s\033[0m (still registered)", svcName)
+			handler.ContainerStopped(msg.Actor.ID)
+		}
+
+	case "remove":
+		if _, known := m.isSwarmService(msg.Actor.ID); !known {
+			return
+		}
+		log.Printf("docker: service event: service removed: \033[33m%s\033[0m", svcName)
+		m.unregisterSwarmService(msg.Actor.ID)
+		handler.RemoveTarget(msg.Actor.ID)
+	}
 }
 
 // WatchEvents subscribes to Docker events for containers with the proxy label.
@@ -510,7 +1017,30 @@ func (m *Manager) WatchEvents(ctx context.Context, handler types.TargetHandler) 
 					name := msg.Actor.Attributes["name"]
 					attrs := msg.Actor.Attributes
 					if attrs["lazy-tcp-proxy.enabled"] != "true" {
-						log.Printf("docker: event: container %s started but not proxied: missing label lazy-tcp-proxy.enabled=true", name)
+						if rid := m.getConfigOnlyID(name); rid != "" {
+							if msg.Action == "start" {
+								log.Printf("docker: event: config-only container started: \033[33m%s\033[0m", name)
+								result, err := m.cli.ContainerInspect(ctx, msg.Actor.ID, client.ContainerInspectOptions{})
+								if err == nil {
+									var networkIDs []string
+									for _, ep := range result.Container.NetworkSettings.Networks {
+										if ep.NetworkID != "" {
+											networkIDs = append(networkIDs, ep.NetworkID)
+										}
+									}
+									joined, joinErr := m.JoinNetworks(ctx, networkIDs)
+									if joinErr != nil {
+										log.Printf("docker: event: failed to join networks for config-only \033[33m%s\033[0m: %v", name, joinErr)
+									}
+									for _, n := range joined {
+										log.Printf("docker: event: joined network: \033[32m%s\033[0m", n)
+									}
+								}
+								handler.ContainerStarted(rid)
+							}
+						} else {
+							log.Printf("docker: event: container %s started but not proxied: missing label lazy-tcp-proxy.enabled=true", name)
+						}
 						continue
 					}
 					if portsVal, hasPorts := attrs["lazy-tcp-proxy.ports"]; hasPorts {
@@ -552,13 +1082,27 @@ func (m *Manager) WatchEvents(ctx context.Context, handler types.TargetHandler) 
 
 				case "die":
 					name := msg.Actor.Attributes["name"]
-					log.Printf("docker: event: container stopped: \033[33m%s\033[0m (still registered)", name)
-					handler.ContainerStopped(msg.Actor.ID)
+					targetID := msg.Actor.ID
+					if rid := m.getConfigOnlyID(name); rid != "" {
+						targetID = rid
+						log.Printf("docker: event: config-only container stopped: \033[33m%s\033[0m (still registered)", name)
+					} else {
+						log.Printf("docker: event: container stopped: \033[33m%s\033[0m (still registered)", name)
+					}
+					handler.ContainerStopped(targetID)
 
 				case "destroy":
 					name := msg.Actor.Attributes["name"]
-					log.Printf("docker: event: container removed: \033[33m%s\033[0m", name)
-					handler.RemoveTarget(msg.Actor.ID)
+					if rid := m.getConfigOnlyID(name); rid != "" {
+						// Config-only targets are defined in config.yaml, not by Docker
+						// labels. Keep listeners alive so the target recovers automatically
+						// when the container is recreated (e.g. docker compose up).
+						log.Printf("docker: event: config-only container removed: \033[33m%s\033[0m (kept registered, waiting for restart)", name)
+						handler.ContainerRemoved(rid)
+					} else {
+						log.Printf("docker: event: container removed: \033[33m%s\033[0m", name)
+						handler.RemoveTarget(msg.Actor.ID)
+					}
 				}
 			}
 		}

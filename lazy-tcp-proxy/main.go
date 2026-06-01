@@ -6,14 +6,22 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"runtime"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/mountain-pass/lazy-tcp-proxy/internal/admin"
+	"github.com/mountain-pass/lazy-tcp-proxy/internal/config"
+	"github.com/mountain-pass/lazy-tcp-proxy/internal/metrics"
 	"github.com/mountain-pass/lazy-tcp-proxy/internal/proxy"
 	"github.com/mountain-pass/lazy-tcp-proxy/internal/scheduler"
+	traefikpkg "github.com/mountain-pass/lazy-tcp-proxy/internal/traefik"
 	"github.com/mountain-pass/lazy-tcp-proxy/internal/types"
 )
 
@@ -62,19 +70,96 @@ func resolvePollInterval() time.Duration {
 	return time.Duration(n) * time.Second
 }
 
-const defaultStatusPort = 8080
+const defaultWebPort = 8080
 
-func resolveStatusPort() int {
-	raw := os.Getenv("STATUS_PORT")
+func resolveWebPort() int {
+	if raw := os.Getenv("WEB_PORT"); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n >= 0 {
+			return n
+		}
+		log.Printf("WEB_PORT=%q is invalid; checking STATUS_PORT", raw)
+	}
+	if raw := os.Getenv("STATUS_PORT"); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n >= 0 {
+			return n
+		}
+		log.Printf("STATUS_PORT=%q is invalid; using default %d", raw, defaultWebPort)
+	}
+	return defaultWebPort
+}
+
+func resolveWebHost() string {
+	return os.Getenv("WEB_HOST")
+}
+
+const defaultAdminPort = 0
+const defaultConfigPath = "/etc/lazy-tcp-proxy/config.yaml"
+
+func resolveAdminPort() int {
+	raw := os.Getenv("ADMIN_PORT")
 	if raw == "" {
-		return defaultStatusPort
+		return defaultAdminPort
 	}
 	n, err := strconv.Atoi(raw)
 	if err != nil || n < 0 {
-		log.Printf("STATUS_PORT=%q is invalid; using default %d", raw, defaultStatusPort)
-		return defaultStatusPort
+		log.Printf("ADMIN_PORT=%q is invalid; using default %d", raw, defaultAdminPort)
+		return defaultAdminPort
 	}
 	return n // 0 means disabled
+}
+
+func resolveConfigPath() string {
+	if v := os.Getenv("CONFIG_PATH"); v != "" {
+		return v
+	}
+	return defaultConfigPath
+}
+
+func resolveMetricsPostgresURL() string {
+	raw := os.Getenv("METRICS_POSTGRES_URL")
+	if raw == "" {
+		log.Println("metrics: disabled (METRICS_POSTGRES_URL not set)")
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		log.Printf("metrics: disabled (invalid METRICS_POSTGRES_URL: %v)", err)
+		return ""
+	}
+	safe := *u
+	if safe.User != nil {
+		safe.User = url.UserPassword("***", "***")
+	}
+	log.Printf("metrics: enabled (host=%s db=%s)", u.Hostname(), strings.TrimPrefix(u.Path, "/"))
+	return raw
+}
+
+func resolveComposeDir(configPath string) string {
+	if v := os.Getenv("COMPOSE_DIR"); v != "" {
+		return v
+	}
+	return filepath.Join(filepath.Dir(configPath), "compose")
+}
+
+func resolveTraefikProxyHost() string {
+	if v := os.Getenv("TRAEFIK_PROXY_HOST"); v != "" {
+		return v
+	}
+	return "lazy-tcp-proxy"
+}
+
+func resolveTraefikEntryPoint() string {
+	if v, ok := os.LookupEnv("TRAEFIK_ENTRYPOINT"); ok {
+		return v
+	}
+	return "websecure"
+}
+
+func resolveTraefikCertResolver() string {
+	if v, ok := os.LookupEnv("TRAEFIK_CERTRESOLVER"); ok {
+		return v
+	}
+	return "myresolver"
 }
 
 const statusDashboardHTML = `<!DOCTYPE html>
@@ -90,109 +175,139 @@ const statusDashboardHTML = `<!DOCTYPE html>
       background: #0f1117;
       color: #e2e8f0;
       padding: 2rem;
+      overflow-x: auto;
     }
     h1 { font-size: 1.4rem; font-weight: 600; margin-bottom: 0.5rem; color: #f8fafc; }
     #last-updated { font-size: 0.75rem; color: #64748b; margin-bottom: 1.5rem; }
     #error { color: #f87171; margin-bottom: 1rem; font-size: 0.875rem; min-height: 1.2em; }
-    #containers { display: flex; flex-direction: column; gap: 0.75rem; }
-    .container-card {
-      background: #1e2330;
-      border: 1px solid #2d3748;
-      border-radius: 8px;
-      padding: 1rem 1.25rem;
-	  max-width: 400px;
-	  width: 100%;
-	  margin: auto;
-	  display: flex;
-	  flex-direction: column;
-	  gap: 0.75rem;
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      min-width: 600px;
+      font-size: 0.85rem;
     }
-	.flex { display: flex; align-items: center; gap: 0.5rem; }
-    .container-header { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; space-y: 1rem; flex-wrap: wrap; }
-    .container-name { font-weight: 600; font-size: 1rem; }
-    .status-badge {
-      font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
-      padding: 2px 8px; border-radius: 999px; letter-spacing: 0.05em;
+    thead th {
+      text-align: left;
+      padding: 0.4rem 1rem;
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #64748b;
+      border-bottom: 1px solid #2d3748;
     }
-    .status-up   { background: #166534; color: #4ade80; }
-    .status-idle { background: #713f12; color: #fbbf24; }
-    .status-down { background: #7f1d1d; color: #f87171; }
-    .container-id { font-size: 0.7rem; color: #475569; font-family: monospace; margin-left: auto; }
-    .ports { display: flex; flex-wrap: wrap; gap: 0.5rem; justify-content: flex-end; }
-    .port-entry {
-      font-size: 0.78rem; background: #263044; border: 1px solid #374151;
-      border-radius: 4px; padding: 2px 8px; color: #94a3b8;
+    tbody tr { border-bottom: 1px solid #1e2330; }
+    tbody tr:last-child { border-bottom: none; }
+    tbody td {
+      padding: 0.5rem 1rem;
+      vertical-align: middle;
+      font-family: monospace;
+      white-space: nowrap;
     }
-    .active-conns { color: #60a5fa; font-weight: 600; }
-    .empty { color: #475569; font-style: italic; }
+    .col-dns { color: #a78bfa; }
+    .col-dns a { color: #a78bfa; text-decoration: none; }
+    .col-dns a:hover { color: #c4b5fd; text-decoration: underline; }
+    .col-dns .tcp-host { color: #22d3ee; }
+    .col-proxy { color: #94a3b8; }
+    .col-target { color: #94a3b8; }
+    .col-conns { color: #60a5fa; text-align: right; }
+    .empty { color: #475569; font-style: italic; font-family: sans-serif; padding: 1rem; }
   </style>
 </head>
 <body>
   <h1>Lazy TCP Proxy</h1>
   <div id="last-updated">Loading…</div>
   <div id="error"></div>
-  <div id="containers"></div>
+  <table>
+    <thead>
+      <tr>
+        <th>dns</th>
+        <th>proxy</th>
+        <th>target</th>
+        <th>connections</th>
+      </tr>
+    </thead>
+    <tbody id="proxy-table-body"></tbody>
+  </table>
   <script>
-    const statusRank = { up: 3, idle: 2, down: 1 };
-
-    function statusOf(running, activeConns) {
-      if (!running) return 'down';
-      return activeConns > 0 ? 'up' : 'idle';
-    }
-
     function esc(s) {
       return String(s)
         .replace(/&/g,'&amp;').replace(/</g,'&lt;')
         .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     }
 
+    function statusIcon(snap) {
+      if (snap.container_missing) return '<span title="Container missing">⚠️</span>';
+      if (!snap.running)          return '<span title="Container stopped">🔴</span>';
+      return snap.active_conns > 0
+        ? '<span title="Container running">🟢</span>'
+        : '<span title="Container idle">🟠</span>';
+    }
+
+    function composeIcons(snap) {
+      const recycleTitle = snap.has_compose_file ? 'Compose file found' : 'No compose file';
+      const boxTitle     = snap.has_tar_gz       ? 'Docker image tar found' : 'No docker image tar';
+      const recycleStyle = snap.has_compose_file ? '' : ' style="opacity:0.25"';
+      const boxStyle     = snap.has_tar_gz       ? '' : ' style="opacity:0.25"';
+      return '<span title="' + recycleTitle + '"' + recycleStyle + '>♻️</span>' +
+             '<span title="' + boxTitle     + '"' + boxStyle     + '>📦</span>';
+    }
+
+    function dnsForPort(snap) {
+      const entries = [];
+      const port = snap.listen_port;
+      for (const h of (snap.traefik_hosts || [])) {
+        const idx = h.lastIndexOf(':');
+        if (idx < 1 || parseInt(h.substring(idx + 1)) !== port) continue;
+        const domain = h.substring(0, idx);
+        entries.push({ url: 'https://' + domain, tcp: false });
+      }
+      for (const h of (snap.traefik_tcp_hosts || [])) {
+        const idx = h.lastIndexOf(':');
+        if (idx < 1 || parseInt(h.substring(idx + 1)) !== port) continue;
+        const domain = h.substring(0, idx);
+        entries.push({ url: 'tcp://' + domain, tcp: true });
+      }
+      return entries;
+    }
+
     function render(data) {
-      const el = document.getElementById('containers');
+      const tbody = document.getElementById('proxy-table-body');
       if (!data.length) {
-        el.innerHTML = '<p class="empty">No containers registered.</p>';
+        tbody.innerHTML = '<tr><td colspan="4" class="empty">No services registered.</td></tr>';
         return;
       }
-
-      // Group by container_id, preserving insertion order (already sorted by server)
-      const groups = new Map();
-      for (const snap of data) {
-        const key = snap.container_id || snap.container_name;
-        if (!groups.has(key)) {
-          groups.set(key, { name: snap.container_name, id: snap.container_id, ports: [] });
-        }
-        groups.get(key).ports.push(snap);
-      }
-
       let html = '';
-      for (const group of groups.values()) {
-        // Overall status: best port status wins (up > idle > down)
-        let best = 'down';
-        for (const p of group.ports) {
-          const s = statusOf(p.running, p.active_conns);
-          if (statusRank[s] > statusRank[best]) best = s;
-        }
-
-        const portBadges = group.ports.sort((a, b) => a.listen_port - b.listen_port).map(p => {
-          return '<a class="port-entry" target="_blank" href="' + window.location.protocol + '//' + window.location.hostname + ':' + p.listen_port + '">:' + p.listen_port + ' (' + p.active_conns + ')' + '</a>';
-        }).join('');
-
+      for (const snap of data) {
+        const udp = snap.is_udp ? '/udp' : '';
+        const dns = dnsForPort(snap);
+        const dnsHtml = dns.length
+          ? dns.map(e => e.tcp
+              ? '<div><span class="tcp-host">' + esc(e.url) + '</span></div>'
+              : '<div><a href="' + esc(e.url) + '" target="_blank">' + esc(e.url) + '</a></div>'
+            ).join('')
+          : '';
+        const proxyCell = (snap.has_auth ? '🔒' : '🔓') +
+          ' :' + snap.listen_port + udp +
+          ' [' + esc(snap.availability) + ']';
+        const targetCell = statusIcon(snap) + composeIcons(snap) +
+          ' ' + esc(snap.container_name) + ':' + snap.target_port + udp;
         html +=
-          '<div class="container-card">' +
-            '<div class="container-header">' +
-              '<span class="container-name">' + esc(group.name) + '</span>' +
-                '<span class="status-badge status-' + best + '">' + best + '</span>' +
-            '</div>' +
-            '<div class="ports">' + portBadges + '</div>' +
-          '</div>';
+          '<tr>' +
+          '<td class="col-dns">' + dnsHtml + '</td>' +
+          '<td class="col-proxy">' + proxyCell + '</td>' +
+          '<td class="col-target">' + targetCell + '</td>' +
+          '<td class="col-conns">' + snap.active_conns + '</td>' +
+          '</tr>';
       }
-      el.innerHTML = html;
+      tbody.innerHTML = html;
     }
 
     async function refresh() {
       try {
-        const res = await fetch('/status');
+        const res = await fetch('/metrics');
         if (!res.ok) throw new Error('HTTP ' + res.status);
-        render(await res.json());
+        render((await res.json()).services);
         document.getElementById('error').textContent = '';
       } catch (e) {
         document.getElementById('error').textContent = 'Failed to fetch status: ' + e.message;
@@ -207,13 +322,32 @@ const statusDashboardHTML = `<!DOCTYPE html>
 </body>
 </html>`
 
-func runStatusServer(ctx context.Context, srv *proxy.ProxyServer, port int) {
+func runStatusServer(ctx context.Context, srv *proxy.ProxyServer, port int, traefikProxyHost, traefikEntryPoint, traefikCertResolver, webHost string, webPort int) {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
+		var ms runtime.MemStats
+		runtime.ReadMemStats(&ms)
 		w.Header().Set("Content-Type", "application/json")
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
-		enc.Encode(srv.Snapshot()) //nolint:errcheck
+		enc.Encode(map[string]any{ //nolint:errcheck
+			"services":     srv.Snapshot(),
+			"memory_used":  ms.Alloc,
+			"memory_total": ms.Sys,
+		})
+	})
+	mux.HandleFunc("/traefik", func(w http.ResponseWriter, r *http.Request) {
+		raw := srv.Snapshot()
+		snaps := make([]traefikpkg.Snapshot, len(raw))
+		for i, s := range raw {
+			snaps[i] = traefikpkg.Snapshot{
+				ListenPort:      s.ListenPort,
+				TraefikHosts:    s.TraefikHosts,
+				TraefikTCPHosts: s.TraefikTCPHosts,
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(traefikpkg.BuildConfig(snaps, traefikProxyHost, traefikEntryPoint, traefikCertResolver, webHost, webPort)) //nolint:errcheck
 	})
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -244,12 +378,96 @@ func runStatusServer(ctx context.Context, srv *proxy.ProxyServer, port int) {
 // event watching, the three proxy methods, and shutdown cleanup.
 type backendManager interface {
 	Discover(ctx context.Context, handler types.TargetHandler) error
+	DiscoverServices(ctx context.Context, handler types.TargetHandler) error
 	WatchEvents(ctx context.Context, handler types.TargetHandler)
+	WatchServiceEvents(ctx context.Context, handler types.TargetHandler)
 	EnsureRunning(ctx context.Context, targetID string) error
 	StopContainer(ctx context.Context, targetID, targetName string) error
 	GetUpstreamHost(ctx context.Context, targetID, hint string) (string, error)
 	WaitUntilHealthy(ctx context.Context, containerID, name string, timeout time.Duration) error
 	Shutdown(ctx context.Context)
+	// DefaultTargetID returns a backend-appropriate container ID for a given
+	// name. Used by the config store to assign IDs to YAML-only targets.
+	// Docker: returns name as-is (Docker API accepts names). K8s: returns "namespace/name".
+	DefaultTargetID(name string) string
+	// NotifyTargets syncs internal backend state (e.g. swarm service registry)
+	// from the merged target list after config overlay is applied.
+	NotifyTargets(targets []types.TargetInfo)
+	// JoinNetworksForContainerNames inspects each named container and joins its
+	// Docker networks. Used to connect the proxy to networks for config-only
+	// targets that are not discovered via Docker labels. No-op on Kubernetes.
+	JoinNetworksForContainerNames(ctx context.Context, names []string)
+	// InspectRunning reports whether the container/service identified by targetID
+	// is currently running and whether it exists at all. Used to populate the
+	// Running and Missing fields for YAML-only targets not discovered via backend
+	// labels. Returns (false, true, nil) on backends where this is not applicable
+	// (e.g. Kubernetes). Returns (false, false, nil) when the container is absent.
+	InspectRunning(ctx context.Context, targetID string) (running, exists bool, err error)
+	// SetConfigOnlyNames registers the name→registeredContainerID mapping for
+	// containers that are managed via config.yaml only (no backend label).
+	// The Docker backend uses this so WatchEvents can route start/stop events
+	// for unlabelled containers. No-op on Kubernetes.
+	SetConfigOnlyNames(nameToID map[string]string)
+	// SetComposeDir sets the directory scanned for compose files and image archives
+	// when re-provisioning a missing container. No-op on Kubernetes.
+	SetComposeDir(dir string)
+}
+
+// discoverAndApply runs backend discovery, applies the YAML config overlay,
+// and updates the proxy server with the merged target list.
+func discoverAndApply(ctx context.Context, mgr backendManager, store *config.Store, srv *proxy.ProxyServer) error {
+	collector := &config.TargetCollector{}
+	if err := mgr.Discover(ctx, collector); err != nil {
+		return fmt.Errorf("discover: %w", err)
+	}
+	if err := mgr.DiscoverServices(ctx, collector); err != nil {
+		log.Printf("discover services warning: %v", err)
+	}
+
+	discovered := collector.Targets()
+	merged, errs := store.Apply(discovered, mgr.DefaultTargetID)
+	for _, e := range errs {
+		log.Printf("config apply warning: %v", e)
+	}
+
+	// Build set of ContainerIDs that came from label discovery.
+	discoveredIDSet := make(map[string]bool, len(discovered))
+	for _, t := range discovered {
+		discoveredIDSet[t.ContainerID] = true
+	}
+
+	// For YAML-only entries (not in the discovered set), inspect the actual
+	// container running state and build the name→ID map for event routing.
+	configOnlyNameToID := make(map[string]string)
+	for i, t := range merged {
+		if !discoveredIDSet[t.ContainerID] {
+			running, exists, err := mgr.InspectRunning(ctx, t.ContainerID)
+			if err != nil {
+				log.Printf("config: could not inspect running state for %q: %v", t.ContainerName, err)
+			} else {
+				merged[i].Running = running
+				merged[i].Missing = !exists
+				if !exists {
+					log.Printf("config: container \033[33m%s\033[0m not found — marking as missing", t.ContainerName)
+				}
+			}
+			configOnlyNameToID[t.ContainerName] = t.ContainerID
+		}
+	}
+	mgr.SetConfigOnlyNames(configOnlyNameToID)
+
+	mgr.NotifyTargets(merged)
+
+	var configOnlyNames []string
+	for _, t := range merged {
+		if len(t.NetworkIDs) == 0 {
+			configOnlyNames = append(configOnlyNames, t.ContainerName)
+		}
+	}
+	mgr.JoinNetworksForContainerNames(ctx, configOnlyNames)
+
+	srv.Update(merged)
+	return nil
 }
 
 
@@ -288,7 +506,11 @@ func main() {
 	log.Printf("inactivity check interval: %s (set POLL_INTERVAL_SECS to override)", tick)
 	startTimeout := resolveStartTimeout()
 	log.Printf("UDP start timeout: %s (set START_TIMEOUT_SECS or lazy-tcp-proxy.start-timeout-secs label to override)", startTimeout)
-	srv := proxy.NewServer(ctx, mgr, startTime, idleTimeout, tick, startTimeout)
+	tlsConfig, tlsErr := proxy.GenerateSelfSignedTLSConfig()
+	if tlsErr != nil {
+		log.Fatalf("failed to generate self-signed TLS certificate: %v", tlsErr)
+	}
+	srv := proxy.NewServer(ctx, mgr, startTime, idleTimeout, tick, startTimeout, tlsConfig)
 
 	// Create and wire the cron scheduler (must happen before Discover so that
 	// initial targets get their schedules registered).
@@ -298,23 +520,79 @@ func main() {
 	defer sched.Stop()
 
 	// Start the HTTP status server
-	statusPort := resolveStatusPort()
-	if statusPort == 0 {
-		log.Println("status server: disabled (STATUS_PORT=0)")
+	webPort := resolveWebPort()
+	webHost := resolveWebHost()
+	traefikProxyHost := resolveTraefikProxyHost()
+	traefikEntryPoint := resolveTraefikEntryPoint()
+	traefikCertResolver := resolveTraefikCertResolver()
+	if webPort == 0 {
+		log.Println("web server: disabled (WEB_PORT=0)")
 	} else {
-		log.Printf("status server: listening on :%d (set STATUS_PORT=0 to disable)", statusPort)
-		runStatusServer(ctx, srv, statusPort)
+		if webHost != "" {
+			log.Printf("web server: listening on :%d (WEB_HOST=%s)", webPort, webHost)
+		} else {
+			log.Printf("web server: listening on :%d (WEB_HOST not set — no Traefik route for web endpoint)", webPort)
+		}
+		log.Printf("traefik provider: GET /traefik available (TRAEFIK_PROXY_HOST=%s, TRAEFIK_ENTRYPOINT=%q, TRAEFIK_CERTRESOLVER=%q)",
+			traefikProxyHost, traefikEntryPoint, traefikCertResolver)
+		runStatusServer(ctx, srv, webPort, traefikProxyHost, traefikEntryPoint, traefikCertResolver, webHost, webPort)
 	}
 
-	// Initial discovery of all matching targets
+	// Load dynamic config file
+	configPath := resolveConfigPath()
+	composeDir := resolveComposeDir(configPath)
+	mgr.SetComposeDir(composeDir)
+	srv.SetComposeDir(composeDir)
+	log.Printf("compose dir: %s (set COMPOSE_DIR to override)", composeDir)
+	store := config.New(configPath)
+	if err := store.Load(); err != nil {
+		log.Fatalf("failed to load config file: %v", err)
+	}
+	log.Printf("config: loaded from %s (%d services)", configPath, len(store.Get().Services))
+
+	// Start the admin server (if enabled)
+	adminPort := resolveAdminPort()
+	adminKey := os.Getenv("ADMIN_API_KEY")
+	if adminPort == 0 {
+		log.Println("admin server: disabled (ADMIN_PORT=0)")
+	} else {
+		if adminKey == "" {
+			log.Fatal("ADMIN_API_KEY must be set when ADMIN_PORT is non-zero")
+		}
+		reloadFn := func(ctx context.Context) error {
+			return discoverAndApply(ctx, mgr, store, srv)
+		}
+		adminSrv := admin.New(store, reloadFn, adminKey)
+		go adminSrv.Run(ctx, adminPort)
+	}
+
+	// Initial discovery of all matching targets (with config overlay applied)
 	log.Println("performing initial target discovery...")
-	if err := mgr.Discover(ctx, srv); err != nil {
+	if err := discoverAndApply(ctx, mgr, store, srv); err != nil {
 		log.Printf("initial discovery error: %v", err)
 	}
 
-	// Watch for runtime changes
+	// Initialise metrics collector after network join and target registration,
+	// so a locally hosted PostgreSQL container is reachable via its Docker network.
+	if pgURL := resolveMetricsPostgresURL(); pgURL != "" {
+		log.Printf("metrics: connecting to PostgreSQL...")
+		collector, err := metrics.New(ctx, pgURL)
+		if err != nil {
+			log.Printf("metrics: failed to connect to PostgreSQL (%v); metrics disabled", err)
+		} else {
+			log.Printf("metrics: connected to PostgreSQL successfully")
+			srv.SetCollector(collector)
+			go collector.Run(ctx)
+		}
+	}
+
+	// Watch for runtime changes (WatchEvents/WatchServiceEvents call RegisterTarget
+	// directly for label-carrying containers/services; config overlay applied on reload only).
 	go func() {
 		mgr.WatchEvents(ctx, srv)
+	}()
+	go func() {
+		mgr.WatchServiceEvents(ctx, srv)
 	}()
 
 	// Periodically stop idle targets

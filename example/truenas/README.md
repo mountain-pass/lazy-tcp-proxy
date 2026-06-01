@@ -57,13 +57,13 @@ services:
 Once the app is running, open a browser or run from the TrueNAS shell:
 
 ```bash
-curl http://localhost:8080/status
+curl http://localhost:8080/metrics
 ```
 
 From another machine on the network:
 
 ```bash
-curl http://<truenas-ip>:8080/status
+curl http://<truenas-ip>:8080/metrics
 ```
 
 Managed containers that are stopped will show `"running": false` and will start automatically on first connection.

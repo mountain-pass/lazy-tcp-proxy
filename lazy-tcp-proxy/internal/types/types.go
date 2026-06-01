@@ -15,6 +15,13 @@ type PortMapping struct {
 	TargetPort int
 }
 
+// Availability mode constants for TargetInfo.Availability.
+const (
+	AvailabilityOnDemand = "ondemand" // start on connection, stop when idle
+	AvailabilityCron     = "cron"     // start/stop via cron schedule; no on-demand start
+	AvailabilityManual   = "manual"   // proxy only; no lifecycle management by this proxy
+)
+
 // TargetInfo holds information about a proxy target.
 type TargetInfo struct {
 	ContainerID   string
@@ -27,12 +34,48 @@ type TargetInfo struct {
 	IdleTimeout   *time.Duration // nil = use global default; non-nil (incl. 0) = per-container override
 	StartTimeout  *time.Duration // nil = use global default; non-nil = per-container override
 	Running       bool           // true if the target was running at time of inspection
+	Missing       bool           // true if the container does not exist (e.g. pruned before proxy started)
 	WebhookURL    string         // empty = no webhook
 	Dependants    []string       // names of managed targets to start/stop alongside this one
 	CronStart       string         // 5-field cron expression; "" = not scheduled
 	CronStop        string         // 5-field cron expression; "" = not scheduled
 	HTTPHealthCheck string         // URL to poll for readiness; "" = disabled
 	HasHealthCheck  bool           // true if the container has a HEALTHCHECK configured
+	TLS             bool           // true → wrap listener with TLS using shared self-signed cert
+	APIKey          []string       // non-empty → require X-API-Key header matching any entry
+	BasicAuth       []string       // non-empty → require Authorization: Basic matching any "user:password" entry
+	DesiredReplicas int            // 0 = plain Docker container; ≥ 1 = swarm service (scale-to value)
+	TraefikHosts    []string       // e.g. ["whoami.localhost:9001"] — domain:listen_port pairs for Traefik HTTP provider
+	TraefikTCPHosts []string       // e.g. ["mongo.example.com:27015"] — domain:listen_port pairs for Traefik TCP SNI provider
+	Availability    string         // "", "ondemand", "cron", or "manual"; "" means derived
+}
+
+// EffectiveAvailability resolves the active lifecycle management mode.
+// If info.Availability is set explicitly it is returned unchanged.
+// Otherwise the mode is derived: "cron" when either cron expression is set,
+// "ondemand" otherwise.
+func EffectiveAvailability(info TargetInfo) string {
+	if info.Availability != "" {
+		return info.Availability
+	}
+	if info.CronStart != "" || info.CronStop != "" {
+		return AvailabilityCron
+	}
+	return AvailabilityOnDemand
+}
+
+// ParseAvailabilityLabel validates the availability label/annotation value.
+// Returns "" (derive from context) if the value is absent or empty.
+// Logs a warning and returns "" for unrecognised values.
+func ParseAvailabilityLabel(name, raw string) string {
+	v := strings.TrimSpace(raw)
+	switch v {
+	case "", AvailabilityOnDemand, AvailabilityCron, AvailabilityManual:
+		return v
+	default:
+		log.Printf("container %s: ignoring invalid availability %q (must be ondemand, cron, or manual)", name, v)
+		return ""
+	}
 }
 
 // TargetHandler is implemented by the proxy server to receive target updates.
@@ -41,6 +84,7 @@ type TargetHandler interface {
 	RemoveTarget(containerID string)
 	ContainerStopped(containerID string)
 	ContainerStarted(containerID string)
+	ContainerRemoved(containerID string)
 }
 
 // ParsePortMappings tokenises a comma-separated "<listen>:<target>" string into
@@ -141,6 +185,42 @@ func ParseIdleTimeoutLabel(name, raw string) *time.Duration {
 	}
 	d := time.Duration(n) * time.Second
 	return &d
+}
+
+// ParseTraefikHosts parses a comma-separated list of "domain:listen_port" entries
+// from the lazy-tcp-proxy.traefik-hosts label. Invalid entries are skipped with a warning.
+func ParseTraefikHosts(label, s string) []string {
+	var out []string
+	for _, token := range strings.Split(s, ",") {
+		entry := strings.TrimSpace(token)
+		if entry == "" {
+			continue
+		}
+		idx := strings.LastIndex(entry, ":")
+		if idx < 1 {
+			log.Printf("label %s: ignoring invalid traefik-hosts entry %q: expected domain:port", label, entry)
+			continue
+		}
+		if _, err := strconv.Atoi(entry[idx+1:]); err != nil {
+			log.Printf("label %s: ignoring invalid traefik-hosts entry %q: port must be an integer", label, entry)
+			continue
+		}
+		out = append(out, entry)
+	}
+	return out
+}
+
+// ParseAuthList splits a comma-separated label/annotation value into a slice
+// of trimmed, non-empty strings. Used for api-key and basic-auth lists.
+func ParseAuthList(label, s string) []string {
+	var out []string
+	for _, token := range strings.Split(s, ",") {
+		v := strings.TrimSpace(token)
+		if v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 // ParseHTTPHealthCheckLabel validates the http-healthcheck URL template and

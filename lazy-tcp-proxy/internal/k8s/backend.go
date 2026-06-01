@@ -233,6 +233,42 @@ func (b *Backend) GetUpstreamHost(_ context.Context, tid, _ string) (string, err
 // Shutdown is a no-op for the k8s backend (no network joins to undo).
 func (b *Backend) Shutdown(_ context.Context) {}
 
+// DiscoverServices is a no-op for the k8s backend (swarm not applicable).
+func (b *Backend) DiscoverServices(_ context.Context, _ types.TargetHandler) error { return nil }
+
+// WatchServiceEvents is a no-op for the k8s backend (swarm not applicable).
+func (b *Backend) WatchServiceEvents(_ context.Context, _ types.TargetHandler) {}
+
+// NotifyTargets is a no-op for the k8s backend (swarm registry not applicable).
+func (b *Backend) NotifyTargets(_ []types.TargetInfo) {}
+
+// JoinNetworksForContainerNames is a no-op for the k8s backend (no Docker networks).
+func (b *Backend) JoinNetworksForContainerNames(_ context.Context, _ []string) {}
+
+// InspectRunning is a no-op for the k8s backend. Kubernetes running state is
+// already populated via label discovery in Discover().
+func (b *Backend) InspectRunning(_ context.Context, _ string) (running, exists bool, err error) {
+	return false, true, nil
+}
+
+// SetConfigOnlyNames is a no-op for the k8s backend. Kubernetes events are
+// filtered at the API level by label selector; config-only event routing is
+// not required.
+func (b *Backend) SetConfigOnlyNames(_ map[string]string) {}
+
+// SetComposeDir is a no-op for the k8s backend (compose re-provisioning is Docker-only).
+func (b *Backend) SetComposeDir(_ string) {}
+
+// DefaultTargetID returns "namespace/name" for use as a ContainerID when a
+// YAML config entry has no matching discovered Deployment.
+func (b *Backend) DefaultTargetID(name string) string {
+	ns := b.namespace
+	if ns == "" {
+		ns = "default"
+	}
+	return ns + "/" + name
+}
+
 // WaitUntilHealthy is a no-op for the k8s backend. Kubernetes readiness is
 // managed by the cluster via readiness probes; the proxy does not poll it.
 func (b *Backend) WaitUntilHealthy(_ context.Context, _, _ string, _ time.Duration) error {
@@ -288,6 +324,7 @@ func (b *Backend) deploymentToTargetInfo(d appsv1.Deployment) (types.TargetInfo,
 
 	cronStart := parseCronAnnotation(d.Name, "lazy-tcp-proxy.cron-start", ann["lazy-tcp-proxy.cron-start"])
 	cronStop := parseCronAnnotation(d.Name, "lazy-tcp-proxy.cron-stop", ann["lazy-tcp-proxy.cron-stop"])
+	availability := types.ParseAvailabilityLabel(d.Name, ann["lazy-tcp-proxy.availability"])
 
 	httpHealthCheck := types.ParseHTTPHealthCheckLabel(d.Name, ann["lazy-tcp-proxy.http-healthcheck"])
 	if httpHealthCheck != "" {
@@ -301,6 +338,10 @@ func (b *Backend) deploymentToTargetInfo(d appsv1.Deployment) (types.TargetInfo,
 		displayURL := strings.ReplaceAll(httpHealthCheck, "{{container}}", svcHost)
 		log.Printf("%s: http-healthcheck URL configured %q", d.Name, displayURL)
 	}
+
+	https := strings.TrimSpace(ann["lazy-tcp-proxy.tls"]) == "true"
+	apiKey := types.ParseAuthList("lazy-tcp-proxy.api-key", ann["lazy-tcp-proxy.api-key"])
+	basicAuth := types.ParseAuthList("lazy-tcp-proxy.basic-auth", ann["lazy-tcp-proxy.basic-auth"])
 
 	return types.TargetInfo{
 		ContainerID:     d.Namespace + "/" + d.Name,
@@ -317,6 +358,10 @@ func (b *Backend) deploymentToTargetInfo(d appsv1.Deployment) (types.TargetInfo,
 		CronStart:       cronStart,
 		CronStop:        cronStop,
 		HTTPHealthCheck: httpHealthCheck,
+		TLS:             https,
+		APIKey:          apiKey,
+		BasicAuth:       basicAuth,
+		Availability:    availability,
 	}, nil
 }
 

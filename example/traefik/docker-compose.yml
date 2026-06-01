@@ -1,0 +1,56 @@
+name: example-traefik
+
+# Architecture:
+#   User → Traefik (:80) → lazy-tcp-proxy (:9001) → whoami (internal)
+#
+# Traefik polls http://lazy-tcp-proxy:8080/traefik every 5s for routing config.
+# lazy-tcp-proxy starts/stops the whoami container on demand.
+
+services:
+
+  traefik:
+    image: traefik:v3
+    container_name: example-traefik
+    ports:
+      - "80:80"
+    volumes:
+      - ./traefik.yml:/etc/traefik/traefik.yml:ro
+    networks:
+      - proxy-net
+    restart: unless-stopped
+
+  lazy-tcp-proxy:
+    image: mountainpass/lazy-tcp-proxy
+    container_name: example-traefik-lazy-tcp-proxy
+    environment:
+      - DOCKER_SOCK=/var/run/docker.sock
+      - IDLE_TIMEOUT_SECS=30
+      - TRAEFIK_PROXY_HOST=lazy-tcp-proxy
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "8080:8080"   # status dashboard + /traefik provider endpoint
+      - "9001:9001"   # whoami listen port (Traefik routes here)
+    networks:
+      - proxy-net
+    restart: unless-stopped
+
+  whoami:
+    image: traefik/whoami
+    container_name: example-traefik-whoami
+    networks:
+      - private-net
+    labels:
+      - "lazy-tcp-proxy.enabled=true"
+      - "lazy-tcp-proxy.ports=9001:80"
+      - "lazy-tcp-proxy.traefik-hosts=whoami.localhost:9001"
+
+networks:
+  # Shared by Traefik and lazy-tcp-proxy so Traefik can reach lazy-tcp-proxy's listen ports.
+  proxy-net:
+    driver: bridge
+
+  # Internal network: only lazy-tcp-proxy (joined at runtime via Docker socket) can reach whoami.
+  private-net:
+    driver: bridge
+    internal: true

@@ -9,7 +9,7 @@ services:
       - "5201:5201"      # TCP load test
       - "5202:5202"      # UDP load test — TCP control channel
       - "5202:5202/udp"  # UDP load test — UDP data channel
-      - "8081:8080"      # status endpoint
+      - "8081:8080"      # metrics endpoint
     environment:
       IDLE_TIMEOUT_SECS: "300"
       POLL_INTERVAL_SECS: "5"

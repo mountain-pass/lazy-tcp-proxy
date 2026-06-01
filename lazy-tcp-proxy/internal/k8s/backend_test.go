@@ -89,6 +89,7 @@ func (h *captureHandler) RegisterTarget(info types.TargetInfo) { h.registered = 
 func (h *captureHandler) RemoveTarget(id string)               { h.removed = append(h.removed, id) }
 func (h *captureHandler) ContainerStopped(id string)           { h.stopped = append(h.stopped, id) }
 func (h *captureHandler) ContainerStarted(_ string)            {}
+func (h *captureHandler) ContainerRemoved(_ string)            {}
 
 // ---- Discover tests ----
 

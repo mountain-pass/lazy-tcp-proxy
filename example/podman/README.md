@@ -92,7 +92,7 @@ podman-compose up -d
 ## Check status
 
 ```bash
-curl http://localhost:8080/status
+curl http://localhost:8080/metrics
 ```
 
 ## Known limitations

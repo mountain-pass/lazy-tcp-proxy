@@ -61,37 +61,50 @@ func TestResolvePollInterval_InvalidFallsBackToDefault(t *testing.T) {
 	}
 }
 
-func TestResolveStatusPort_Default(t *testing.T) {
+func TestResolveWebPort_Default(t *testing.T) {
+	t.Setenv("WEB_PORT", "")
 	t.Setenv("STATUS_PORT", "")
-	if got := resolveStatusPort(); got != defaultStatusPort {
-		t.Errorf("got %d, want %d", got, defaultStatusPort)
+	if got := resolveWebPort(); got != defaultWebPort {
+		t.Errorf("got %d, want %d", got, defaultWebPort)
 	}
 }
 
-func TestResolveStatusPort_ValidValue(t *testing.T) {
-	t.Setenv("STATUS_PORT", "9090")
-	if got := resolveStatusPort(); got != 9090 {
+func TestResolveWebPort_ValidValue(t *testing.T) {
+	t.Setenv("WEB_PORT", "9090")
+	t.Setenv("STATUS_PORT", "")
+	if got := resolveWebPort(); got != 9090 {
 		t.Errorf("got %d, want 9090", got)
 	}
 }
 
-func TestResolveStatusPort_ZeroDisables(t *testing.T) {
-	t.Setenv("STATUS_PORT", "0")
-	if got := resolveStatusPort(); got != 0 {
+func TestResolveWebPort_ZeroDisables(t *testing.T) {
+	t.Setenv("WEB_PORT", "0")
+	t.Setenv("STATUS_PORT", "")
+	if got := resolveWebPort(); got != 0 {
 		t.Errorf("got %d, want 0 (disabled)", got)
 	}
 }
 
-func TestResolveStatusPort_InvalidFallsBackToDefault(t *testing.T) {
-	t.Setenv("STATUS_PORT", "notaport")
-	if got := resolveStatusPort(); got != defaultStatusPort {
-		t.Errorf("got %d, want default %d", got, defaultStatusPort)
+func TestResolveWebPort_InvalidFallsBackToDefault(t *testing.T) {
+	t.Setenv("WEB_PORT", "notaport")
+	t.Setenv("STATUS_PORT", "")
+	if got := resolveWebPort(); got != defaultWebPort {
+		t.Errorf("got %d, want default %d", got, defaultWebPort)
 	}
 }
 
-func TestResolveStatusPort_NegativeFallsBackToDefault(t *testing.T) {
-	t.Setenv("STATUS_PORT", "-1")
-	if got := resolveStatusPort(); got != defaultStatusPort {
-		t.Errorf("got %d, want default %d", got, defaultStatusPort)
+func TestResolveWebPort_NegativeFallsBackToDefault(t *testing.T) {
+	t.Setenv("WEB_PORT", "-1")
+	t.Setenv("STATUS_PORT", "")
+	if got := resolveWebPort(); got != defaultWebPort {
+		t.Errorf("got %d, want default %d", got, defaultWebPort)
+	}
+}
+
+func TestResolveWebPort_FallsBackToStatusPort(t *testing.T) {
+	t.Setenv("WEB_PORT", "")
+	t.Setenv("STATUS_PORT", "9091")
+	if got := resolveWebPort(); got != 9091 {
+		t.Errorf("got %d, want 9091", got)
 	}
 }
