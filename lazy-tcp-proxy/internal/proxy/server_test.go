@@ -665,7 +665,7 @@ func newTestServer() *ProxyServer {
 		targets:         make(map[int]*targetState),
 		udpTargets:      make(map[int]*udpListenerState),
 		nameToID:        make(map[string]string),
-		dependantStates: make(map[string]*dependantState),
+		portlessTargets: make(map[string]*portlessState),
 		idleTimeout:     5 * time.Minute,
 		pollInterval:    15 * time.Second,
 		startTime:       time.Now().Add(-1 * time.Hour),
@@ -864,7 +864,7 @@ func populateCascadeTargetsPortless(s *ProxyServer, hubRunning, ollamaRunning bo
 	}
 	s.nameToID["hub"] = "hub-id"
 	s.nameToID["ollama"] = "ollama-id"
-	s.dependantStates["ollama-id"] = &dependantState{
+	s.portlessTargets["ollama-id"] = &portlessState{
 		containerName: "ollama",
 		running:       ollamaRunning,
 	}

@@ -155,24 +155,31 @@ type cronScheduler interface {
 	Unregister(targetID string)
 }
 
+// portlessState tracks a cascade-only container that has no proxy port mappings.
+type portlessState struct {
+	containerName string
+	running       bool
+}
+
 // ProxyServer manages TCP listeners and proxies connections to targets.
 type ProxyServer struct {
-	backend       containerBackend
-	ctx           context.Context
-	mu            sync.RWMutex
-	targets       map[int]*targetState     // keyed by TCP listen port
-	udpTargets    map[int]*udpListenerState // keyed by UDP listen port
-	nameToID      map[string]string        // ContainerName → ContainerID for cascade lookup
-	pollInterval  time.Duration
-	idleTimeout   time.Duration
-	startTimeout  time.Duration
-	startTime     time.Time
-	webhookClient *http.Client
-	sched         cronScheduler      // nil if no scheduler configured
-	startGroup    singleflight.Group // deduplicates concurrent EnsureRunning calls per container
-	tlsConfig     *tls.Config        // shared self-signed cert; nil if cert generation failed
-	collector     *metrics.Collector // nil if metrics are disabled
-	composeDir    string             // directory scanned for compose files and image archives
+	backend          containerBackend
+	ctx              context.Context
+	mu               sync.RWMutex
+	targets          map[int]*targetState     // keyed by TCP listen port
+	udpTargets       map[int]*udpListenerState // keyed by UDP listen port
+	portlessTargets  map[string]*portlessState // containerID → state; cascade-only containers with no ports
+	nameToID         map[string]string        // ContainerName → ContainerID for cascade lookup
+	pollInterval     time.Duration
+	idleTimeout      time.Duration
+	startTimeout     time.Duration
+	startTime        time.Time
+	webhookClient    *http.Client
+	sched            cronScheduler      // nil if no scheduler configured
+	startGroup       singleflight.Group // deduplicates concurrent EnsureRunning calls per container
+	tlsConfig        *tls.Config        // shared self-signed cert; nil if cert generation failed
+	collector        *metrics.Collector // nil if metrics are disabled
+	composeDir       string             // directory scanned for compose files and image archives
 }
 
 // SetComposeDir sets the compose directory used to populate HasComposeFile and HasTarGz
@@ -199,11 +206,12 @@ func (s *ProxyServer) composeFlags(name string) (hasCompose, hasTar bool) {
 // NewServer creates a new ProxyServer backed by the given backend.
 func NewServer(ctx context.Context, b containerBackend, startTime time.Time, idleTimeout, pollInterval, startTimeout time.Duration, tlsConfig *tls.Config) *ProxyServer {
 	return &ProxyServer{
-		backend:       b,
-		ctx:           ctx,
-		targets:       make(map[int]*targetState),
-		udpTargets:    make(map[int]*udpListenerState),
-		nameToID:      make(map[string]string),
+		backend:         b,
+		ctx:             ctx,
+		targets:         make(map[int]*targetState),
+		udpTargets:      make(map[int]*udpListenerState),
+		portlessTargets: make(map[string]*portlessState),
+		nameToID:        make(map[string]string),
 		idleTimeout:   idleTimeout,
 		startTimeout:  startTimeout,
 		pollInterval:  pollInterval,
@@ -606,6 +614,21 @@ func (s *ProxyServer) RegisterTarget(info types.TargetInfo) {
 	// Keep name→ID map current for cascade lookups.
 	s.nameToID[info.ContainerName] = info.ContainerID
 
+	// Port-less containers (cascade-only): track running state so cascadeStop can act on them.
+	if len(info.Ports) == 0 && len(info.UDPPorts) == 0 {
+		if existing, ok := s.portlessTargets[info.ContainerID]; ok {
+			existing.containerName = info.ContainerName
+			existing.running = info.Running
+			log.Printf("proxy: updated target \033[33m%s\033[0m (cascade-only, no ports)", info.ContainerName)
+		} else {
+			s.portlessTargets[info.ContainerID] = &portlessState{
+				containerName: info.ContainerName,
+				running:       info.Running,
+			}
+			log.Printf("proxy: registered target \033[33m%s\033[0m (cascade-only, no ports)", info.ContainerName)
+		}
+	}
+
 	// Register with cron scheduler only when the effective availability is cron
 	// and at least one cron expression is present.
 	if s.sched != nil &&
@@ -647,6 +670,11 @@ func (s *ProxyServer) RemoveTarget(containerID string) {
 			}
 			delete(s.udpTargets, port)
 		}
+	}
+	if ps, ok := s.portlessTargets[containerID]; ok {
+		log.Printf("proxy: removing cascade-only target \033[33m%s\033[0m", ps.containerName)
+		delete(s.nameToID, ps.containerName)
+		delete(s.portlessTargets, containerID)
 	}
 	if s.sched != nil {
 		s.sched.Unregister(containerID)
@@ -1335,7 +1363,7 @@ func (s *ProxyServer) cascadeStart(upstream types.TargetInfo) {
 			log.Printf("proxy: cascade start: error starting \033[33m%s\033[0m: %v", depName, startErr)
 			continue
 		}
-		s.mu.RLock()
+		s.mu.Lock()
 		for _, ts := range s.targets {
 			if ts.info.ContainerID == depID {
 				ts.running = true
@@ -1346,7 +1374,10 @@ func (s *ProxyServer) cascadeStart(upstream types.TargetInfo) {
 				uls.running = true
 			}
 		}
-		s.mu.RUnlock()
+		if ps, ok := s.portlessTargets[depID]; ok {
+			ps.running = true
+		}
+		s.mu.Unlock()
 	}
 }
 
@@ -1371,6 +1402,11 @@ func (s *ProxyServer) cascadeStop(upstream types.TargetInfo) {
 				}
 			}
 		}
+		if !running {
+			if ps, ok := s.portlessTargets[depID]; ok && ps.running {
+				running = true
+			}
+		}
 		s.mu.RUnlock()
 
 		if !ok {
@@ -1387,7 +1423,7 @@ func (s *ProxyServer) cascadeStop(upstream types.TargetInfo) {
 			log.Printf("proxy: cascade stop: error stopping \033[33m%s\033[0m: %v", depName, err)
 			continue
 		}
-		s.mu.RLock()
+		s.mu.Lock()
 		for _, ts := range s.targets {
 			if ts.info.ContainerID == depID {
 				ts.running = false
@@ -1398,6 +1434,9 @@ func (s *ProxyServer) cascadeStop(upstream types.TargetInfo) {
 				uls.running = false
 			}
 		}
-		s.mu.RUnlock()
+		if ps, ok := s.portlessTargets[depID]; ok {
+			ps.running = false
+		}
+		s.mu.Unlock()
 	}
 }
