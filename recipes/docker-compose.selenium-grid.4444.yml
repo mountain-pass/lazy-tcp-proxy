@@ -1,0 +1,75 @@
+name: selenium-grid
+
+services:
+
+  selenium-hub:
+    container_name: selenium-hub
+    image: selenium/hub:4.40.0
+    platform: linux/arm64 # required for mac
+    shm_size: "2g"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4444/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    labels:
+      - "lazy-tcp-proxy.enabled=true"
+      - "lazy-tcp-proxy.ports=4444:4444"
+      - "lazy-tcp-proxy.idle-timeout-secs=900"
+      - "lazy-tcp-proxy.dependants=selenium-node-chrome,selenium-node-firefox,selenium-node-chromium"
+      - "lazy-tcp-proxy.http-healthcheck=http://{{container}}:4444/status"
+
+  # selenium-node-chrome:
+  #   container_name: selenium-node-chrome
+  #   image: selenium/node-chrome:4.40.0
+  #   platform: linux/arm64 # no matching manifest for linux/arm64 in the manifest list entries
+  #   ports:
+  #     - "7901:7900" # VNC for Chrome node
+  #   shm_size: "2g"
+  #   environment:
+  #     - SE_EVENT_BUS_HOST=selenium-hub
+  #     - SE_EVENT_BUS_PUBLISH_PORT=4442
+  #     - SE_EVENT_BUS_SUBSCRIBE_PORT=4443
+  #     - SE_VNC_NO_PASSWORD=1
+  #     - SE_NODE_MAX_SESSIONS=10
+  #     - SE_SESSION_TIMEOUT=300
+  #     - SE_NODE_SESSION_TIMEOUT=300
+  #   depends_on:
+  #     - selenium-hub
+
+  selenium-node-firefox:
+    container_name: selenium-node-firefox
+    image: selenium/node-firefox:4.40.0
+    platform: linux/arm64 # required for mac
+    ports:
+      - "7902:7900" # VNC for Firefox node
+    shm_size: "2g"
+    environment:
+      - SE_EVENT_BUS_HOST=selenium-hub
+      - SE_EVENT_BUS_PUBLISH_PORT=4442
+      - SE_EVENT_BUS_SUBSCRIBE_PORT=4443
+      - SE_VNC_NO_PASSWORD=1
+      - SE_NODE_MAX_SESSIONS=10
+      - SE_SESSION_TIMEOUT=300
+      - SE_NODE_SESSION_TIMEOUT=300
+    depends_on:
+      - selenium-hub
+
+  selenium-node-chromium:
+    container_name: selenium-node-chromium
+    image: selenium/node-chromium:4.40.0
+    platform: linux/arm64 # required for mac
+    ports:
+      - "7903:7900" # VNC for Chromium node
+    shm_size: "2g"
+    environment:
+      - SE_EVENT_BUS_HOST=selenium-hub
+      - SE_EVENT_BUS_PUBLISH_PORT=4442
+      - SE_EVENT_BUS_SUBSCRIBE_PORT=4443
+      - SE_VNC_NO_PASSWORD=1
+      - SE_NODE_MAX_SESSIONS=10
+      - SE_SESSION_TIMEOUT=300
+      - SE_NODE_SESSION_TIMEOUT=300
+    depends_on:
+      - selenium-hub

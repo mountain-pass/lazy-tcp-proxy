@@ -2,13 +2,16 @@ name: ollama-gpu
 
 services:
   ollama:
-    image: ollama/ollama
+    image: ollama/ollama:latest
+    pull_policy: always
     container_name: ollama
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
-      - OLLAMA_ORIGINS=http://192.168.1.1:9001,http://127.0.0.1:9001,http://0.0.0.0:9001
+      - OLLAMA_ORIGINS=*
     volumes:
       - ./ollama:/root/.ollama
+    ports:
+      - "11434:11434"
     deploy:
       resources:
         reservations:
@@ -19,20 +22,22 @@ services:
     runtime: nvidia
     labels:
       - "lazy-tcp-proxy.enabled=true"
-      - "lazy-tcp-proxy.ports=9001:11434"
+      - "lazy-tcp-proxy.http-healthcheck=http://{{container}}:11434/"
 
   open-webui:
+    depends_on:
+      ollama:
+        condition: service_started
     image: ghcr.io/open-webui/open-webui:main
     container_name: open-webui
-#    ports:
-#      - "3000:8080"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     environment:
-      - OLLAMA_BASE_URL=http://host.docker.internal:9001
+      - OLLAMA_BASE_URL=http://ollama:11434
       - WEBUI_AUTH=false
+    ports:
+      - "8080:8080"
     volumes:
       - ./open-webui:/app/backend/data
     labels:
       - "lazy-tcp-proxy.enabled=true"
       - "lazy-tcp-proxy.ports=9002:8080"
+      - "lazy-tcp-proxy.dependants=ollama"

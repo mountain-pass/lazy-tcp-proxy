@@ -36,8 +36,8 @@ services:
     labels:
       - "lazy-tcp-proxy.enabled=true"
       - "lazy-tcp-proxy.ports=32400:32400,8324:8324,32469:32469"
-      - "lazy-tcp-proxy.udp-ports=1900:1900,5353:5353,32410:32410,32412:32412,32413:32413"
+      - "lazy-tcp-proxy.udp-ports=1900:1900,5353:5353"
       # No 'self' discovery (otherwise plex will keep itself alive via port 32414!)
       # - "lazy-tcp-proxy.udp-ports=1900:1900,5353:5353,32410:32410,32412:32412,32413:32413,32414:32414"
       # - "lazy-tcp-proxy.block-list=172.22.0.1" # <- this changes per system
-      - "lazy-tcp-proxy.http-healthcheck=http://${container}:32400/"
+      - "lazy-tcp-proxy.http-healthcheck=http://{{container}}:32400/web/index.html"
