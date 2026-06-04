@@ -9,8 +9,6 @@ import (
 	"testing"
 )
 
-func ptr(s string) *string { return &s }
-
 func TestParseEnvVars_withDefaults(t *testing.T) {
 	result := parseEnvVars("image: ${IMG:-nginx:latest}")
 	if len(result) != 1 {
