@@ -19,6 +19,7 @@ import (
 	"github.com/mountain-pass/lazy-tcp-proxy/internal/admin"
 	"github.com/mountain-pass/lazy-tcp-proxy/internal/config"
 	"github.com/mountain-pass/lazy-tcp-proxy/internal/metrics"
+	portainerpkg "github.com/mountain-pass/lazy-tcp-proxy/internal/portainer"
 	"github.com/mountain-pass/lazy-tcp-proxy/internal/proxy"
 	"github.com/mountain-pass/lazy-tcp-proxy/internal/scheduler"
 	traefikpkg "github.com/mountain-pass/lazy-tcp-proxy/internal/traefik"
@@ -139,6 +140,19 @@ func resolveComposeDir(configPath string) string {
 		return v
 	}
 	return filepath.Join(filepath.Dir(configPath), "compose")
+}
+
+func resolveRecipesDir() string {
+	if v := os.Getenv("RECIPES_DIR"); v != "" {
+		return v
+	}
+	return "./recipes"
+}
+
+func ensureDir(path string) {
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		log.Printf("warning: could not create directory %q: %v", path, err)
+	}
 }
 
 func resolveTraefikProxyHost() string {
@@ -342,7 +356,7 @@ const statusDashboardHTML = `<!DOCTYPE html>
 </body>
 </html>`
 
-func runStatusServer(ctx context.Context, srv *proxy.ProxyServer, port int, traefikProxyHost, traefikEntryPoint, traefikCertResolver, webHost string, webPort int, traefikTimeouts *traefikpkg.TransportTimeouts) {
+func runStatusServer(ctx context.Context, srv *proxy.ProxyServer, port int, traefikProxyHost, traefikEntryPoint, traefikCertResolver, webHost string, webPort int, traefikTimeouts *traefikpkg.TransportTimeouts, recipesDir string) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
 		var ms runtime.MemStats
@@ -369,6 +383,7 @@ func runStatusServer(ctx context.Context, srv *proxy.ProxyServer, port int, trae
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(traefikpkg.BuildConfig(snaps, traefikProxyHost, traefikEntryPoint, traefikCertResolver, webHost, webPort, traefikTimeouts)) //nolint:errcheck
 	})
+	mux.HandleFunc("/portainer", portainerpkg.Handler(recipesDir))
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprint(w, "ok") //nolint:errcheck
@@ -546,6 +561,9 @@ func main() {
 	traefikEntryPoint := resolveTraefikEntryPoint()
 	traefikCertResolver := resolveTraefikCertResolver()
 	traefikTimeouts := resolveTraefikTransportTimeouts()
+	recipesDir := resolveRecipesDir()
+	ensureDir(recipesDir)
+	log.Printf("portainer app templates: GET /portainer available (RECIPES_DIR=%s)", recipesDir)
 	if webPort == 0 {
 		log.Println("web server: disabled (WEB_PORT=0)")
 	} else {
@@ -557,12 +575,13 @@ func main() {
 		log.Printf("traefik provider: GET /traefik available (TRAEFIK_PROXY_HOST=%s, TRAEFIK_ENTRYPOINT=%q, TRAEFIK_CERTRESOLVER=%q, TRAEFIK_DIAL_TIMEOUT=%s, TRAEFIK_RESPONSE_HEADER_TIMEOUT=%s, TRAEFIK_IDLE_CONN_TIMEOUT=%s)",
 			traefikProxyHost, traefikEntryPoint, traefikCertResolver,
 			traefikTimeouts.DialTimeout, traefikTimeouts.ResponseHeaderTimeout, traefikTimeouts.IdleConnTimeout)
-		runStatusServer(ctx, srv, webPort, traefikProxyHost, traefikEntryPoint, traefikCertResolver, webHost, webPort, traefikTimeouts)
+		runStatusServer(ctx, srv, webPort, traefikProxyHost, traefikEntryPoint, traefikCertResolver, webHost, webPort, traefikTimeouts, recipesDir)
 	}
 
 	// Load dynamic config file
 	configPath := resolveConfigPath()
 	composeDir := resolveComposeDir(configPath)
+	ensureDir(composeDir)
 	mgr.SetComposeDir(composeDir)
 	srv.SetComposeDir(composeDir)
 	log.Printf("compose dir: %s (set COMPOSE_DIR to override)", composeDir)

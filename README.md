@@ -89,7 +89,7 @@ Configure via environment variables:
 | `START_TIMEOUT_SECS`  | How long (in seconds) to wait for an upstream to be ready after a cold start — applies to the UDP datagram readiness probe, the HTTP health check (`lazy-tcp-proxy.http-healthcheck`), and the Docker HEALTHCHECK readiness gate. If the timeout is reached the connection/flow is dropped. Override per-container with the `lazy-tcp-proxy.start-timeout-secs` label | 30 |
 | `POLL_INTERVAL_SECS`  | How often (in seconds) to check for idle containers                | 15                        |
 | `DOCKER_SOCK`         | Path to Docker socket                                              | `/var/run/docker.sock`    |
-| `WEB_PORT`            | Port for the HTTP web server (dashboard, `/metrics`, `/traefik`, `/health`); set to `0` to disable. `STATUS_PORT` is accepted as a legacy alias | 8080 |
+| `WEB_PORT`            | Port for the HTTP web server (dashboard, `/metrics`, `/traefik`, `/portainer`, `/health`); set to `0` to disable. `STATUS_PORT` is accepted as a legacy alias | 8080 |
 | `WEB_HOST`            | When set, exposes lazy-tcp-proxy's web endpoint via Traefik: adds `Host('<WEB_HOST>') → http://<TRAEFIK_PROXY_HOST>:<WEB_PORT>` to `/traefik`. Unset = no Traefik route for the web endpoint | *(none)* |
 | `STATUS_PORT`         | Legacy alias for `WEB_PORT`; ignored when `WEB_PORT` is set       | 8080                      |
 | `CONFIG_PATH`         | Path to the dynamic YAML config file (see [README_CONFIG.md](README_CONFIG.md)) | `/etc/lazy-tcp-proxy/config.yaml` |
@@ -102,6 +102,7 @@ Configure via environment variables:
 | `TRAEFIK_RESPONSE_HEADER_TIMEOUT` | Maximum time to wait for an upstream response header. Increase this for services that do long-running uploads (e.g. a Docker registry). Use Go duration syntax (e.g. `15m`, `0` for no limit) | `15m` |
 | `TRAEFIK_IDLE_CONN_TIMEOUT` | Maximum time an idle keep-alive connection remains open to the upstream. Use Go duration syntax (e.g. `90s`) | `90s` |
 | `COMPOSE_DIR`         | Directory scanned for compose files and image archives when re-provisioning a missing container (see [Compose Re-provisioning](#compose-re-provisioning)) | `<dir of CONFIG_PATH>/compose` |
+| `RECIPES_DIR`         | Directory of Docker Compose recipe files served by `GET /portainer` (see [Portainer App Templates](#portainer-app-templates)) | `./recipes` |
 | `METRICS_POSTGRES_URL` | PostgreSQL connection URL for metrics storage (see [PostgreSQL Metrics](#postgresql-metrics)). When set, per-port stats are accumulated and flushed to a `proxy_metrics` table every minute. When absent, metrics storage is disabled and no PostgreSQL connection is made | *(none — disabled)* |
 
 All are optional; defaults are safe for most setups.
@@ -167,6 +168,58 @@ Minimal liveness probe — always returns `200 ok` while the proxy is running.
 curl http://localhost:8080/health
 # ok
 ```
+
+---
+
+## Portainer App Templates
+
+`GET /portainer` serves all Docker Compose recipe files in `RECIPES_DIR` as a [Portainer App Templates v2](https://docs.portainer.io/advanced/app-templates/build) JSON payload. This lets you deploy any recipe directly from the Portainer UI without copying files manually.
+
+### Setup
+
+In Portainer: **Settings → App Templates → URL** → set to:
+
+```
+http://<proxy-host>:8080/portainer
+```
+
+On the next page load, all recipes appear in the **App Templates** list. Each template shows its configurable environment variables (detected automatically from `${VAR:-default}` patterns in the YAML) as editable fields in the Portainer deploy wizard.
+
+### Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RECIPES_DIR` | `./recipes` | Directory containing `*.yml` recipe files to serve |
+
+The directory is created automatically on startup if it does not exist. Mount your own recipe files or use the built-in [recipes](recipes) directory.
+
+### Response format
+
+```sh
+curl http://localhost:8080/portainer
+```
+
+```json
+{
+  "version": "2",
+  "templates": [
+    {
+      "type": 3,
+      "title": "docker-compose.postgres.5432",
+      "description": "",
+      "logo": "",
+      "compose": "name: postgres\n\nservices:\n  postgres:\n    ...",
+      "env": [
+        { "name": "POSTGRES_USER",     "label": "POSTGRES_USER",     "default": "admin" },
+        { "name": "POSTGRES_PASSWORD", "label": "POSTGRES_PASSWORD", "default": "password" },
+        { "name": "POSTGRES_DB",       "label": "POSTGRES_DB",       "default": "postgres" }
+      ]
+    }
+  ]
+}
+```
+
+The endpoint is public (no authentication required). If `RECIPES_DIR` is missing or empty, an empty templates list is returned.
 
 ---
 
@@ -333,6 +386,7 @@ volumes:
 - **HTTP health check:** Poll a URL after cold start before forwarding TCP traffic.
 - **Docker HEALTHCHECK gate:** Automatically waits for containers with a `HEALTHCHECK` to become healthy before forwarding.
 - **Compose re-provisioning:** Automatically recreates a missing container via a Docker Compose file when a connection arrives. Supports loading a custom image archive (`.tar.gz`) before running compose up.
+- **Portainer App Templates:** Serves recipe files as a Portainer-compatible App Templates v2 endpoint (`GET /portainer`), with auto-detected configurable environment variables.
 - **Structured, colorized logs:** Container names in yellow, network names in green, source addresses in cyan for easy scanning.
 
 ---
