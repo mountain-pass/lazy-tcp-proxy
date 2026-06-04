@@ -135,9 +135,8 @@ func TestTemplatesHandler_returnsJSON(t *testing.T) {
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/portainer/templates", nil)
-	req.Host = "localhost:8080"
 	w := httptest.NewRecorder()
-	TemplatesHandler(dir)(w, req)
+	TemplatesHandler(dir, "http://localhost:8080")(w, req)
 
 	resp := w.Result()
 	if resp.StatusCode != http.StatusOK {

@@ -92,15 +92,11 @@ func BuildTemplates(recipesDir, baseURL string) AppTemplates {
 }
 
 // TemplatesHandler returns an http.HandlerFunc that serves the Portainer App
-// Templates v3 JSON. The repository URL is derived from the incoming request's
-// Host header so it is correct behind reverse proxies.
-func TemplatesHandler(recipesDir string) http.HandlerFunc {
+// Templates v3 JSON. baseURL is the scheme+host (e.g. "http://192.168.1.1:8080")
+// used to build the repository.url field; it is supplied by the caller so it
+// can be sourced from TRAEFIK_PROXY_HOST and WEB_PORT env vars.
+func TemplatesHandler(recipesDir, baseURL string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		scheme := "http"
-		if r.TLS != nil {
-			scheme = "https"
-		}
-		baseURL := scheme + "://" + r.Host
 		tmpl := BuildTemplates(recipesDir, baseURL)
 		w.Header().Set("Content-Type", "application/json")
 		enc := json.NewEncoder(w)
