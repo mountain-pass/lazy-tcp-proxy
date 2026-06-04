@@ -52,13 +52,24 @@ To add more services, add them to `docker-compose.yml` with the labels:
 ```yaml
 labels:
   - "lazy-tcp-proxy.enabled=true"
-  - "lazy-tcp-proxy.ports=<listen_port>:<container_port>"
-  - "lazy-tcp-proxy.traefik-hosts=<domain>:<listen_port>"
+  - "lazy-tcp-proxy.traefik-hosts=<domain>:<container_port>"
 ```
 
-And expose the listen port from lazy-tcp-proxy:
+lazy-tcp-proxy automatically assigns a unique listen port for each domain (starting from
+`LISTEN_START_PORT`, default `8000`). You still need to expose the auto-assigned port range from
+the lazy-tcp-proxy container:
 ```yaml
 lazy-tcp-proxy:
   ports:
-    - "<listen_port>:<listen_port>"
+    - "8000-8099:8000-8099"   # expose the auto-assigned port range
+  environment:
+    LISTEN_START_PORT: "8000"
+```
+
+If you need a fixed listen port, use `lazy-tcp-proxy.ports` explicitly instead:
+```yaml
+labels:
+  - "lazy-tcp-proxy.enabled=true"
+  - "lazy-tcp-proxy.ports=<listen_port>:<container_port>"
+  - "lazy-tcp-proxy.traefik-hosts=<domain>:<container_port>"
 ```

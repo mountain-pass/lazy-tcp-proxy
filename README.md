@@ -95,6 +95,7 @@ Configure via environment variables:
 | `CONFIG_PATH`         | Path to the dynamic YAML config file (see [README_CONFIG.md](README_CONFIG.md)) | `/etc/lazy-tcp-proxy/config.yaml` |
 | `ADMIN_PORT`          | Port for the admin API; set to `0` to disable (see [README_CONFIG.md](README_CONFIG.md)) | `0` (disabled) |
 | `ADMIN_API_KEY`       | API key for the admin API; required when `ADMIN_PORT` > 0          | *(none)*                  |
+| `LISTEN_START_PORT`   | Starting port number for dynamically assigned listen ports (used when `lazy-tcp-proxy.traefik-hosts` or `lazy-tcp-proxy.traefik-tcp-hosts` labels are present without explicit `ports`). Ports already claimed by explicit `lazy-tcp-proxy.ports` / `udp-ports` labels are skipped | `8000` |
 | `TRAEFIK_PROXY_HOST`  | Hostname/IP Traefik uses to reach lazy-tcp-proxy's listen ports (used in `/traefik` service URLs) | `lazy-tcp-proxy` |
 | `TRAEFIK_ENTRYPOINT`  | Traefik entry point added to every generated router; set to `""` to omit | `websecure` |
 | `TRAEFIK_CERTRESOLVER` | Cert resolver added to every generated router's `tls.certResolver`; set to `""` to omit | `myresolver` |

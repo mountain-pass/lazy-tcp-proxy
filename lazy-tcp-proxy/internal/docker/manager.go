@@ -32,11 +32,16 @@ type Manager struct {
 	configOnlyMu  sync.RWMutex
 	configOnlyIDs map[string]string // container name → registered ContainerID (config-only targets)
 	composeDir    string            // directory scanned for compose files and image archives
+	portAlloc     *types.PortAllocator
 }
 
 // SetComposeDir sets the directory in which compose files and image archives are looked up
 // when re-provisioning a missing container. An empty string disables re-provisioning.
 func (m *Manager) SetComposeDir(dir string) { m.composeDir = dir }
+
+// SetPortAllocator wires the dynamic port allocator used to assign listen ports
+// to traefik_hosts / traefik_tcp_hosts label entries.
+func (m *Manager) SetPortAllocator(a *types.PortAllocator) { m.portAlloc = a }
 
 // NewManager creates a new Manager. The Docker socket path can be set via
 // DOCKER_SOCK (e.g. /var/run/docker.sock). Falls back to DOCKER_HOST, then the
@@ -163,8 +168,18 @@ func (m *Manager) containerToTargetInfo(ctx context.Context, containerID string)
 
 	portsStr, hasPorts := inspect.Config.Labels["lazy-tcp-proxy.ports"]
 	udpPortsStr, hasUDPPorts := inspect.Config.Labels["lazy-tcp-proxy.udp-ports"]
-	if !hasPorts && (!hasUDPPorts || udpPortsStr == "") {
-		return types.TargetInfo{}, fmt.Errorf("missing label lazy-tcp-proxy.ports or lazy-tcp-proxy.udp-ports")
+
+	var traefikHostSpecs []types.TraefikHostSpec
+	if v := strings.TrimSpace(inspect.Config.Labels["lazy-tcp-proxy.traefik-hosts"]); v != "" {
+		traefikHostSpecs = types.ParseTraefikHostSpecs("lazy-tcp-proxy.traefik-hosts", v)
+	}
+	var traefikTCPHostSpecs []types.TraefikHostSpec
+	if v := strings.TrimSpace(inspect.Config.Labels["lazy-tcp-proxy.traefik-tcp-hosts"]); v != "" {
+		traefikTCPHostSpecs = types.ParseTraefikHostSpecs("lazy-tcp-proxy.traefik-tcp-hosts", v)
+	}
+
+	if !hasPorts && (!hasUDPPorts || udpPortsStr == "") && len(traefikHostSpecs) == 0 && len(traefikTCPHostSpecs) == 0 {
+		return types.TargetInfo{}, fmt.Errorf("missing required label: one of lazy-tcp-proxy.ports, lazy-tcp-proxy.udp-ports, lazy-tcp-proxy.traefik-hosts, lazy-tcp-proxy.traefik-tcp-hosts")
 	}
 	var ports []types.PortMapping
 	if hasPorts {
@@ -245,13 +260,12 @@ func (m *Manager) containerToTargetInfo(ctx context.Context, containerID string)
 	apiKey := types.ParseAuthList("lazy-tcp-proxy.api-key", inspect.Config.Labels["lazy-tcp-proxy.api-key"])
 	basicAuth := types.ParseAuthList("lazy-tcp-proxy.basic-auth", inspect.Config.Labels["lazy-tcp-proxy.basic-auth"])
 
-	var traefikHosts []string
-	if v := strings.TrimSpace(inspect.Config.Labels["lazy-tcp-proxy.traefik-hosts"]); v != "" {
-		traefikHosts = types.ParseTraefikHosts("lazy-tcp-proxy.traefik-hosts", v)
-	}
-	var traefikTCPHosts []string
-	if v := strings.TrimSpace(inspect.Config.Labels["lazy-tcp-proxy.traefik-tcp-hosts"]); v != "" {
-		traefikTCPHosts = types.ParseTraefikHosts("lazy-tcp-proxy.traefik-tcp-hosts", v)
+	var traefikHosts, traefikTCPHosts []string
+	if m.portAlloc != nil {
+		m.portAlloc.ClaimPorts(ports)
+		m.portAlloc.ClaimPorts(udpPorts)
+		traefikHosts = m.portAlloc.AllocateForHosts(traefikHostSpecs)
+		traefikTCPHosts = m.portAlloc.AllocateForHosts(traefikTCPHostSpecs)
 	}
 
 	return types.TargetInfo{
@@ -749,8 +763,18 @@ func (m *Manager) serviceToTargetInfo(svc swarm.Service) (types.TargetInfo, erro
 
 	portsStr, hasPorts := labels["lazy-tcp-proxy.ports"]
 	udpPortsStr, hasUDPPorts := labels["lazy-tcp-proxy.udp-ports"]
-	if !hasPorts && (!hasUDPPorts || udpPortsStr == "") {
-		return types.TargetInfo{}, fmt.Errorf("missing label lazy-tcp-proxy.ports or lazy-tcp-proxy.udp-ports")
+
+	var traefikHostSpecs []types.TraefikHostSpec
+	if v := strings.TrimSpace(labels["lazy-tcp-proxy.traefik-hosts"]); v != "" {
+		traefikHostSpecs = types.ParseTraefikHostSpecs("lazy-tcp-proxy.traefik-hosts", v)
+	}
+	var traefikTCPHostSpecs []types.TraefikHostSpec
+	if v := strings.TrimSpace(labels["lazy-tcp-proxy.traefik-tcp-hosts"]); v != "" {
+		traefikTCPHostSpecs = types.ParseTraefikHostSpecs("lazy-tcp-proxy.traefik-tcp-hosts", v)
+	}
+
+	if !hasPorts && (!hasUDPPorts || udpPortsStr == "") && len(traefikHostSpecs) == 0 && len(traefikTCPHostSpecs) == 0 {
+		return types.TargetInfo{}, fmt.Errorf("missing required label: one of lazy-tcp-proxy.ports, lazy-tcp-proxy.udp-ports, lazy-tcp-proxy.traefik-hosts, lazy-tcp-proxy.traefik-tcp-hosts")
 	}
 
 	var ports []types.PortMapping
@@ -802,13 +826,12 @@ func (m *Manager) serviceToTargetInfo(svc swarm.Service) (types.TargetInfo, erro
 	cronStop := parseCronLabel(name, "lazy-tcp-proxy.cron-stop", labels["lazy-tcp-proxy.cron-stop"])
 	httpHealthCheck := types.ParseHTTPHealthCheckLabel(name, labels["lazy-tcp-proxy.http-healthcheck"])
 
-	var traefikHosts []string
-	if v := strings.TrimSpace(labels["lazy-tcp-proxy.traefik-hosts"]); v != "" {
-		traefikHosts = types.ParseTraefikHosts("lazy-tcp-proxy.traefik-hosts", v)
-	}
-	var traefikTCPHosts []string
-	if v := strings.TrimSpace(labels["lazy-tcp-proxy.traefik-tcp-hosts"]); v != "" {
-		traefikTCPHosts = types.ParseTraefikHosts("lazy-tcp-proxy.traefik-tcp-hosts", v)
+	var traefikHosts, traefikTCPHosts []string
+	if m.portAlloc != nil {
+		m.portAlloc.ClaimPorts(ports)
+		m.portAlloc.ClaimPorts(udpPorts)
+		traefikHosts = m.portAlloc.AllocateForHosts(traefikHostSpecs)
+		traefikTCPHosts = m.portAlloc.AllocateForHosts(traefikTCPHostSpecs)
 	}
 
 	running := svc.ServiceStatus != nil && svc.ServiceStatus.RunningTasks > 0
@@ -1048,11 +1071,13 @@ func (m *Manager) WatchEvents(ctx context.Context, handler types.TargetHandler) 
 					}
 					portsVal, hasPorts := attrs["lazy-tcp-proxy.ports"]
 					udpPortsVal := attrs["lazy-tcp-proxy.udp-ports"]
-					if !hasPorts && udpPortsVal == "" {
-						log.Printf("docker: event: container %s started but not proxied: missing label lazy-tcp-proxy.ports or lazy-tcp-proxy.udp-ports", name)
+					traefikHostsVal := attrs["lazy-tcp-proxy.traefik-hosts"]
+					traefikTCPHostsVal := attrs["lazy-tcp-proxy.traefik-tcp-hosts"]
+					if !hasPorts && udpPortsVal == "" && traefikHostsVal == "" && traefikTCPHostsVal == "" {
+						log.Printf("docker: event: container %s started but not proxied: missing required label: one of lazy-tcp-proxy.ports, lazy-tcp-proxy.udp-ports, lazy-tcp-proxy.traefik-hosts, lazy-tcp-proxy.traefik-tcp-hosts", name)
 						continue
 					}
-					valid := !hasPorts // UDP-only: skip TCP validation
+					valid := !hasPorts || traefikHostsVal != "" || traefikTCPHostsVal != "" // UDP/traefik-only: skip TCP ports validation
 					if hasPorts {
 						for _, token := range strings.Split(portsVal, ",") {
 							parts := strings.SplitN(strings.TrimSpace(token), ":", 2)
