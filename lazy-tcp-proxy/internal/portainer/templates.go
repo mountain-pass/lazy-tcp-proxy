@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-// AppTemplates is the top-level Portainer App Templates v2 response.
+// AppTemplates is the top-level Portainer App Templates v3 response.
 type AppTemplates struct {
 	Version   string     `json:"version"`
 	Templates []Template `json:"templates"`
@@ -61,11 +61,11 @@ func parseEnvVars(content string) []EnvVar {
 }
 
 // BuildTemplates reads all *.yml files from recipesDir and returns a Portainer
-// App Templates v2 payload. baseURL is the scheme+host used to build the
+// App Templates v3 payload. baseURL is the scheme+host used to build the
 // repository.url field (e.g. "http://192.168.1.1:8080"). Returns an empty
 // templates list if the directory does not exist or contains no yml files.
 func BuildTemplates(recipesDir, baseURL string) AppTemplates {
-	out := AppTemplates{Version: "2", Templates: []Template{}}
+	out := AppTemplates{Version: "3", Templates: []Template{}}
 	entries, err := filepath.Glob(filepath.Join(recipesDir, "*.yml"))
 	if err != nil || len(entries) == 0 {
 		return out
@@ -92,15 +92,11 @@ func BuildTemplates(recipesDir, baseURL string) AppTemplates {
 }
 
 // TemplatesHandler returns an http.HandlerFunc that serves the Portainer App
-// Templates v2 JSON. The repository URL is derived from the incoming request's
-// Host header so it is correct behind reverse proxies.
-func TemplatesHandler(recipesDir string) http.HandlerFunc {
+// Templates v3 JSON. baseURL is the scheme+host (e.g. "http://192.168.1.1:8080")
+// used to build the repository.url field; it is supplied by the caller so it
+// can be sourced from TRAEFIK_PROXY_HOST and WEB_PORT env vars.
+func TemplatesHandler(recipesDir, baseURL string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		scheme := "http"
-		if r.TLS != nil {
-			scheme = "https"
-		}
-		baseURL := scheme + "://" + r.Host
 		tmpl := BuildTemplates(recipesDir, baseURL)
 		w.Header().Set("Content-Type", "application/json")
 		enc := json.NewEncoder(w)
