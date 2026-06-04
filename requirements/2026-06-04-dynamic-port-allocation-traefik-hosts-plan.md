@@ -8,7 +8,7 @@
 
 1. **Add `PortAllocator` to `internal/types/portalloc.go`** — new file, process-global allocator that tracks claimed ports and assigns the next free one starting from a configurable base.
 
-2. **Update `ParseTraefikHosts` in `internal/types/types.go`** — change the comment and log message: the port suffix is now the *target* port (integer validation stays identical, but semantics change). Rename function to `ParseTraefikHostSpecs` to make the break explicit, accepting `domain:target_port` entries and returning `[]TraefikHostSpec` (struct with `Domain string` + `TargetPort int`).
+2. **Update `ParseTraefikHosts` in `internal/types/types.go`** — change the comment and log message: the port suffix is now the *target* port (integer validation stays identical, but semantics change). Rename function to `ParseTraefikHostSpecs` to make the break explicit, accepting `domain:target_port` entries and returning `[]TraefikHostSpec` (struct with `Domain string` + `TargetPort int`). Entries where the domain is blank or empty (e.g. `:8000`) are silently skipped with a warning log.
 
 3. **Update `internal/docker/manager.go` — `containerToTargetInfo`** — after parsing traefik host specs, call the allocator to resolve `domain:listen_port` pairs. Update validation: accept the container if any one of `ports`, `udp-ports`, `traefik_hosts`, `traefik_tcp_hosts` is present and valid.
 
@@ -26,6 +26,14 @@
 
 10. **Update `internal/config/store_test.go`** (if it exists) and `internal/docker/manager_test.go` — update tests affected by the validation change.
 
+11. **Update `README.md`** — add `LISTEN_START_PORT` to the environment variables table.
+
+12. **Update `README_LABELS.md`** — change `traefik-hosts` and `traefik-tcp-hosts` descriptions and examples from `domain:listen_port` to `domain:target_port` format; explain that the listen port is auto-assigned from `LISTEN_START_PORT`.
+
+13. **Update `README_CONFIG.md`** — update `traefik_hosts` / `traefik_tcp_hosts` YAML examples and descriptions to use `domain:target_port` format; update placeholder comment in the generated config file (also done in code in step 7).
+
+14. **Update `example/traefik/README.md`** — update any `traefik-hosts` examples to the new format.
+
 ---
 
 ## File Change Summary
@@ -39,6 +47,10 @@
 | `internal/config/store.go` | Modify | `entryToTargetInfo` validation; allocator call; placeholder comment |
 | `main.go` | Modify | Read `LISTEN_START_PORT`; construct and inject allocator |
 | `internal/types/types_test.go` | Modify | Update `ParseTraefikHosts` tests; add allocator tests |
+| `README.md` | Modify | Add `LISTEN_START_PORT` to environment variables table |
+| `README_LABELS.md` | Modify | Update `traefik-hosts` / `traefik-tcp-hosts` format description and examples |
+| `README_CONFIG.md` | Modify | Update `traefik_hosts` / `traefik_tcp_hosts` YAML format description and examples |
+| `example/traefik/README.md` | Modify | Update `traefik-hosts` examples to new format |
 
 ---
 
@@ -173,6 +185,8 @@ cfgStore.SetPortAllocator(alloc)
 | `TestPortAllocator_ExplicitPortsNotOverlap` | `ClaimPorts([{8000, 9000}])`, allocate `[{b.com, 9000}]` | `["b.com:8001"]` |
 | `TestParseTraefikHostSpecs_Valid` | `"s3.example.com:9000,mongo.example.com:27017"` | `[{s3.example.com, 9000}, {mongo.example.com, 27017}]` |
 | `TestParseTraefikHostSpecs_InvalidPort` | `"bad.host:notanumber"` | empty (skipped with warning) |
+| `TestParseTraefikHostSpecs_EmptyDomain` | `":8000"` | empty (skipped with warning — blank domain) |
+| `TestParseTraefikHostSpecs_MixedEmptyDomain` | `"good.com:9000,:8000"` | `[{good.com, 9000}]` only |
 | `TestValidation_TraefikHostsOnly` | container with only `traefik-hosts` label | accepted (no error) |
 | `TestValidation_NoneOfTheAbove` | container with none of the 4 labels | rejected with clear error |
 
