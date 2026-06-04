@@ -126,12 +126,10 @@ func TestUploadPack(t *testing.T) {
 	if !bytes.HasPrefix(body, []byte("0008NAK\n")) {
 		t.Errorf("expected NAK response, got prefix %q", body[:min(16, len(body))])
 	}
-	// followed by a sideband pkt-line containing PACK magic:
-	// 4-byte hex length + \x01 (data channel) + "PACK..."
+	// no side-band-64k in request body → raw PACK immediately after NAK
 	after := body[8:]
-	// skip the 4-byte pkt-line length prefix and the 1-byte sideband channel prefix
-	if len(after) < 9 || string(after[5:9]) != "PACK" {
-		t.Errorf("expected PACK after NAK sideband pkt-line, got %q", after[:min(16, len(after))])
+	if len(after) < 4 || string(after[:4]) != "PACK" {
+		t.Errorf("expected raw PACK after NAK, got %q", after[:min(16, len(after))])
 	}
 	_ = snap
 }

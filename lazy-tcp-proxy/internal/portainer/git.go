@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -149,25 +150,32 @@ func serveInfoRefs(snap repoSnapshot, w http.ResponseWriter) {
 }
 
 func serveUploadPack(snap repoSnapshot, w http.ResponseWriter, r *http.Request) {
-	_, _ = io.ReadAll(r.Body)
+	body, _ := io.ReadAll(r.Body)
+	log.Printf("git-upload-pack request body (%d bytes): %q", len(body), body)
+
 	w.Header().Set("Content-Type", "application/x-git-upload-pack-result")
 	w.Header().Set("Cache-Control", "no-cache")
 
 	_, _ = w.Write(pktLine("NAK\n"))
 
-	// Wrap PACK data in sideband pkt-lines: prefix each chunk with \x01 (data channel).
-	// We always advertise side-band-64k so clients always expect this framing.
-	const chunkSize = 65516 // max pkt-line payload minus 1 byte for sideband prefix
-	for len(snap.packData) > 0 {
-		n := len(snap.packData)
-		if n > chunkSize {
-			n = chunkSize
+	useSideband := bytes.Contains(body, []byte("side-band"))
+	log.Printf("git-upload-pack: useSideband=%v", useSideband)
+
+	if useSideband {
+		const chunkSize = 65516
+		for len(snap.packData) > 0 {
+			n := len(snap.packData)
+			if n > chunkSize {
+				n = chunkSize
+			}
+			chunk := append([]byte{0x01}, snap.packData[:n]...)
+			_, _ = w.Write(pktLine(string(chunk)))
+			snap.packData = snap.packData[n:]
 		}
-		chunk := append([]byte{0x01}, snap.packData[:n]...)
-		_, _ = w.Write(pktLine(string(chunk)))
-		snap.packData = snap.packData[n:]
+		_, _ = w.Write(pktFlush)
+	} else {
+		_, _ = w.Write(snap.packData)
 	}
-	_, _ = w.Write(pktFlush)
 }
 
 // GitHandler returns an http.Handler that serves a read-only git Smart HTTP
