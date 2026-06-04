@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -150,6 +151,7 @@ func serveInfoRefs(snap repoSnapshot, w http.ResponseWriter) {
 
 func serveUploadPack(snap repoSnapshot, w http.ResponseWriter, r *http.Request) {
 	body, _ := io.ReadAll(r.Body)
+	log.Printf("git-upload-pack request body (%d bytes): %q", len(body), body)
 
 	w.Header().Set("Content-Type", "application/x-git-upload-pack-result")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -158,12 +160,14 @@ func serveUploadPack(snap repoSnapshot, w http.ResponseWriter, r *http.Request) 
 	// the server to send a "shallow <sha>" line for the boundary commit before NAK.
 	if bytes.Contains(body, []byte("deepen")) {
 		sha := fmt.Sprintf("%x", snap.commitSHA)
+		log.Printf("git-upload-pack: sending shallow %s", sha)
 		_, _ = w.Write(pktLine("shallow " + sha + "\n"))
 	}
 
 	_, _ = w.Write(pktLine("NAK\n"))
 
 	useSideband := bytes.Contains(body, []byte("side-band"))
+	log.Printf("git-upload-pack: useSideband=%v packSize=%d", useSideband, len(snap.packData))
 	if useSideband {
 		const chunkSize = 65516
 		for len(snap.packData) > 0 {
