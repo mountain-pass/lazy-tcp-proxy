@@ -101,3 +101,4 @@
 | REQ-097 | Portainer App Templates Endpoint (`/portainer`)                          | Medium | Completed     | 2026-06-04 | [2026-06-04-portainer-app-templates-endpoint.md](2026-06-04-portainer-app-templates-endpoint.md) |
 | REQ-098 | Ensure RECIPES_DIR and COMPOSE_DIR Exist on Startup                      | Low    | Completed     | 2026-06-04 | [2026-06-04-ensure-dirs-on-startup.md](2026-06-04-ensure-dirs-on-startup.md) |
 | REQ-099 | Portainer Git HTTP Endpoint (`/portainer/git`)                           | Medium | In Progress       | 2026-06-04 | [2026-06-04-portainer-git-http-endpoint.md](2026-06-04-portainer-git-http-endpoint.md) |
+| REQ-100 | Dynamic Port Allocation for `traefik_hosts` / `traefik_tcp_hosts`        | High   | In Progress   | 2026-06-04 | [2026-06-04-dynamic-port-allocation-traefik-hosts.md](2026-06-04-dynamic-port-allocation-traefik-hosts.md) |
