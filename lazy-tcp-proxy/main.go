@@ -142,11 +142,11 @@ func resolveComposeDir(configPath string) string {
 	return filepath.Join(filepath.Dir(configPath), "compose")
 }
 
-func resolveRecipesDir() string {
+func resolveRecipesDir(configPath string) string {
 	if v := os.Getenv("RECIPES_DIR"); v != "" {
 		return v
 	}
-	return "./recipes"
+	return filepath.Join(filepath.Dir(configPath), "recipes")
 }
 
 func ensureDir(path string) {
@@ -554,6 +554,13 @@ func main() {
 	sched.Start()
 	defer sched.Stop()
 
+	// Resolve config and directory paths up front so both the web server and
+	// compose re-provisioning use consistent absolute paths.
+	configPath := resolveConfigPath()
+	recipesDir := resolveRecipesDir(configPath)
+	ensureDir(recipesDir)
+	log.Printf("portainer app templates: GET /portainer available (RECIPES_DIR=%s)", recipesDir)
+
 	// Start the HTTP status server
 	webPort := resolveWebPort()
 	webHost := resolveWebHost()
@@ -561,9 +568,6 @@ func main() {
 	traefikEntryPoint := resolveTraefikEntryPoint()
 	traefikCertResolver := resolveTraefikCertResolver()
 	traefikTimeouts := resolveTraefikTransportTimeouts()
-	recipesDir := resolveRecipesDir()
-	ensureDir(recipesDir)
-	log.Printf("portainer app templates: GET /portainer available (RECIPES_DIR=%s)", recipesDir)
 	if webPort == 0 {
 		log.Println("web server: disabled (WEB_PORT=0)")
 	} else {
@@ -579,7 +583,6 @@ func main() {
 	}
 
 	// Load dynamic config file
-	configPath := resolveConfigPath()
 	composeDir := resolveComposeDir(configPath)
 	ensureDir(composeDir)
 	mgr.SetComposeDir(composeDir)
