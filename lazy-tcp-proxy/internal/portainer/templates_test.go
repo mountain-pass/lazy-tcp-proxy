@@ -128,6 +128,134 @@ func TestBuildTemplates_sorted(t *testing.T) {
 	}
 }
 
+func TestParseXPortainer_allFields(t *testing.T) {
+	content := `
+x-portainer:
+  title: S3 Bucket
+  description: A simple s3 bucket - one user, one bucket.
+  administrator-only: true
+  logo: data:image/png;base64,abc123
+  categories:
+    - storage
+    - aws
+  note: Not for the faint of heart.
+`
+	meta := parseXPortainer(content)
+	if meta.Title != "S3 Bucket" {
+		t.Errorf("title: want %q got %q", "S3 Bucket", meta.Title)
+	}
+	if meta.Description != "A simple s3 bucket - one user, one bucket." {
+		t.Errorf("description mismatch: %q", meta.Description)
+	}
+	if !meta.AdministratorOnly {
+		t.Error("administrator-only: want true got false")
+	}
+	if meta.Logo != "data:image/png;base64,abc123" {
+		t.Errorf("logo mismatch: %q", meta.Logo)
+	}
+	if len(meta.Categories) != 2 || meta.Categories[0] != "storage" || meta.Categories[1] != "aws" {
+		t.Errorf("categories mismatch: %v", meta.Categories)
+	}
+	if meta.Note != "Not for the faint of heart." {
+		t.Errorf("note mismatch: %q", meta.Note)
+	}
+}
+
+func TestParseXPortainer_partial(t *testing.T) {
+	content := `
+x-portainer:
+  title: My Service
+  logo: https://example.com/logo.png
+`
+	meta := parseXPortainer(content)
+	if meta.Title != "My Service" {
+		t.Errorf("title: want %q got %q", "My Service", meta.Title)
+	}
+	if meta.Logo != "https://example.com/logo.png" {
+		t.Errorf("logo mismatch: %q", meta.Logo)
+	}
+	if meta.Description != "" || meta.Note != "" || meta.Categories != nil || meta.AdministratorOnly {
+		t.Errorf("unexpected non-zero fields in partial parse: %+v", meta)
+	}
+}
+
+func TestParseXPortainer_absent(t *testing.T) {
+	content := "name: myservice\nservices:\n  web:\n    image: nginx\n"
+	meta := parseXPortainer(content)
+	if meta.Title != "" || meta.Description != "" || meta.Logo != "" || meta.Note != "" || meta.Categories != nil || meta.AdministratorOnly {
+		t.Errorf("expected zero struct for absent x-portainer, got: %+v", meta)
+	}
+}
+
+func TestParseXPortainer_malformed(t *testing.T) {
+	content := "x-portainer: !!binary invalid\n"
+	meta := parseXPortainer(content)
+	// Should not panic; zero struct returned
+	_ = meta
+}
+
+func TestBuildTemplates_xPortainerOverride(t *testing.T) {
+	dir := t.TempDir()
+	content := `name: minio
+x-portainer:
+  title: S3 Bucket
+  description: A simple s3 bucket.
+  logo: data:image/png;base64,abc
+  categories:
+    - storage
+  note: Handle with care.
+services:
+  minio:
+    image: minio/minio
+    environment:
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-secret}
+`
+	if err := os.WriteFile(filepath.Join(dir, "docker-compose.minio.9000.yml"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out := BuildTemplates(dir, "http://localhost:8080")
+	if len(out.Templates) != 1 {
+		t.Fatalf("expected 1 template, got %d", len(out.Templates))
+	}
+	tmpl := out.Templates[0]
+	if tmpl.Title != "S3 Bucket" {
+		t.Errorf("title: want %q got %q", "S3 Bucket", tmpl.Title)
+	}
+	if tmpl.Description != "A simple s3 bucket." {
+		t.Errorf("description: want %q got %q", "A simple s3 bucket.", tmpl.Description)
+	}
+	if tmpl.Logo != "data:image/png;base64,abc" {
+		t.Errorf("logo mismatch: %q", tmpl.Logo)
+	}
+	if len(tmpl.Categories) != 1 || tmpl.Categories[0] != "storage" {
+		t.Errorf("categories mismatch: %v", tmpl.Categories)
+	}
+	if tmpl.Note != "Handle with care." {
+		t.Errorf("note mismatch: %q", tmpl.Note)
+	}
+	// Env detection still works alongside x-portainer
+	if len(tmpl.Env) != 1 || tmpl.Env[0].Name != "MINIO_ROOT_PASSWORD" {
+		t.Errorf("env mismatch: %v", tmpl.Env)
+	}
+}
+
+func TestBuildTemplates_noXPortainer_regression(t *testing.T) {
+	dir := t.TempDir()
+	content := "name: redis\nservices:\n  redis:\n    image: redis\n"
+	if err := os.WriteFile(filepath.Join(dir, "docker-compose.redis.6379.yml"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out := BuildTemplates(dir, "http://localhost:8080")
+	if len(out.Templates) != 1 {
+		t.Fatalf("expected 1 template, got %d", len(out.Templates))
+	}
+	if out.Templates[0].Title != "docker-compose.redis.6379" {
+		t.Errorf("title regression: want filename-derived title, got %q", out.Templates[0].Title)
+	}
+}
+
 func TestTemplatesHandler_returnsJSON(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "docker-compose.test.yml"), []byte("name: test\n"), 0o644); err != nil {

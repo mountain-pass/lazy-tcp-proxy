@@ -2,7 +2,7 @@
 
 **Requirement**: [2026-06-04-portainer-x-portainer-metadata-override.md](2026-06-04-portainer-x-portainer-metadata-override.md)
 **Date**: 2026-06-04
-**Status**: Approved
+**Status**: Implemented
 
 ## Implementation Steps
 
