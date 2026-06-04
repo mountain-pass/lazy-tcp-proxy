@@ -149,11 +149,31 @@ func serveInfoRefs(snap repoSnapshot, w http.ResponseWriter) {
 }
 
 func serveUploadPack(snap repoSnapshot, w http.ResponseWriter, r *http.Request) {
-	_, _ = io.ReadAll(r.Body)
+	body, _ := io.ReadAll(r.Body)
 	w.Header().Set("Content-Type", "application/x-git-upload-pack-result")
 	w.Header().Set("Cache-Control", "no-cache")
+
+	// Check if the client advertised sideband-64k or sideband capability.
+	useSideband := bytes.Contains(body, []byte("sideband"))
+
 	_, _ = w.Write(pktLine("NAK\n"))
-	_, _ = w.Write(snap.packData)
+
+	if useSideband {
+		// Wrap PACK data in sideband pkt-lines: prefix each chunk with \x01 (data channel).
+		const chunkSize = 65516 // max pkt-line payload minus 1 byte for sideband prefix
+		for len(snap.packData) > 0 {
+			n := len(snap.packData)
+			if n > chunkSize {
+				n = chunkSize
+			}
+			chunk := append([]byte{0x01}, snap.packData[:n]...)
+			_, _ = w.Write(pktLine(string(chunk)))
+			snap.packData = snap.packData[n:]
+		}
+		_, _ = w.Write(pktFlush)
+	} else {
+		_, _ = w.Write(snap.packData)
+	}
 }
 
 // GitHandler returns an http.Handler that serves a read-only git Smart HTTP
