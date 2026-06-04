@@ -151,15 +151,18 @@ func TestUploadPack_shallow(t *testing.T) {
 	GitHandler(dir).ServeHTTP(w, req)
 
 	body := w.Body.Bytes()
-	// must begin with "shallow <sha>\n" pkt-line
+	// must begin with "shallow <sha>\n" pkt-line, then flush, then NAK
 	shallowPkt := pktLine("shallow " + sha + "\n")
 	if !bytes.HasPrefix(body, shallowPkt) {
 		t.Errorf("expected shallow pkt-line prefix, got %q", body[:min(32, len(body))])
 	}
-	// then NAK
 	after := body[len(shallowPkt):]
+	if !bytes.HasPrefix(after, pktFlush) {
+		t.Errorf("expected flush after shallow, got %q", after[:min(8, len(after))])
+	}
+	after = after[len(pktFlush):]
 	if !bytes.HasPrefix(after, []byte("0008NAK\n")) {
-		t.Errorf("expected NAK after shallow, got %q", after[:min(16, len(after))])
+		t.Errorf("expected NAK after flush, got %q", after[:min(16, len(after))])
 	}
 }
 

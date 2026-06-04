@@ -162,6 +162,7 @@ func serveUploadPack(snap repoSnapshot, w http.ResponseWriter, r *http.Request) 
 		sha := fmt.Sprintf("%x", snap.commitSHA)
 		log.Printf("git-upload-pack: sending shallow %s", sha)
 		_, _ = w.Write(pktLine("shallow " + sha + "\n"))
+		_, _ = w.Write(pktFlush)
 	}
 
 	_, _ = w.Write(pktLine("NAK\n"))
