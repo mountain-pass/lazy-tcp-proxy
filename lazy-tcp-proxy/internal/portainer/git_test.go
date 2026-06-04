@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	gogit "github.com/go-git/go-git/v5"
 )
 
 func TestGitSHA_blob(t *testing.T) {
@@ -167,6 +169,36 @@ func TestGitClone(t *testing.T) {
 			continue
 		}
 		_ = data
+	}
+}
+
+func TestGoGitClone(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "minio.yml"), []byte("name: minio\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "postgres.yml"), []byte("name: postgres\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Mirror production: GitHandler mounted at /portainer/git/ inside a ServeMux.
+	mux := http.NewServeMux()
+	mux.Handle("/portainer/git/", GitHandler(dir))
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	cloneDir := t.TempDir()
+	_, err := gogit.PlainClone(cloneDir, false, &gogit.CloneOptions{
+		URL: srv.URL + "/portainer/git",
+	})
+	if err != nil {
+		t.Fatalf("go-git clone failed: %v", err)
+	}
+
+	for _, name := range []string{"minio.yml", "postgres.yml"} {
+		if _, err := os.ReadFile(filepath.Join(cloneDir, name)); err != nil {
+			t.Errorf("file %q not in cloned repo: %v", name, err)
+		}
 	}
 }
 
