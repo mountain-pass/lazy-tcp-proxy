@@ -71,8 +71,8 @@ POSTGRES_DB: ${POSTGRES_DB:-postgres}
 
 func TestBuildTemplates_emptyDir(t *testing.T) {
 	out := BuildTemplates("/nonexistent/path/that/does/not/exist", "http://localhost")
-	if out.Version != "2" {
-		t.Errorf("expected version '2', got %q", out.Version)
+	if out.Version != "3" {
+		t.Errorf("expected version '3', got %q", out.Version)
 	}
 	if len(out.Templates) != 0 {
 		t.Errorf("expected 0 templates, got %d", len(out.Templates))
@@ -135,9 +135,8 @@ func TestTemplatesHandler_returnsJSON(t *testing.T) {
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/portainer/templates", nil)
-	req.Host = "localhost:8080"
 	w := httptest.NewRecorder()
-	TemplatesHandler(dir)(w, req)
+	TemplatesHandler(dir, "http://localhost:8080")(w, req)
 
 	resp := w.Result()
 	if resp.StatusCode != http.StatusOK {
@@ -150,8 +149,8 @@ func TestTemplatesHandler_returnsJSON(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		t.Fatalf("invalid JSON: %v", err)
 	}
-	if out.Version != "2" {
-		t.Errorf("version: want '2' got %q", out.Version)
+	if out.Version != "3" {
+		t.Errorf("version: want '3' got %q", out.Version)
 	}
 	if len(out.Templates) != 1 {
 		t.Errorf("expected 1 template, got %d", len(out.Templates))

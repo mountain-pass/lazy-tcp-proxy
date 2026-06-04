@@ -383,7 +383,8 @@ func runStatusServer(ctx context.Context, srv *proxy.ProxyServer, port int, trae
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(traefikpkg.BuildConfig(snaps, traefikProxyHost, traefikEntryPoint, traefikCertResolver, webHost, webPort, traefikTimeouts)) //nolint:errcheck
 	})
-	mux.HandleFunc("/portainer/templates", portainerpkg.TemplatesHandler(recipesDir))
+	portainerBaseURL := fmt.Sprintf("http://%s:%d", traefikProxyHost, webPort)
+	mux.HandleFunc("/portainer/templates", portainerpkg.TemplatesHandler(recipesDir, portainerBaseURL))
 	mux.Handle("/portainer/git/", portainerpkg.GitHandler(recipesDir))
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
