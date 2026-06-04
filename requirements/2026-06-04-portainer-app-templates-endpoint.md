@@ -2,7 +2,7 @@
 
 **Date Added**: 2026-06-04
 **Priority**: Medium
-**Status**: Planned
+**Status**: In Progress
 
 ## Problem Statement
 
@@ -21,7 +21,7 @@ Portainer supports a custom "App Templates" endpoint that lets users provision D
 3. Every file matching `recipes/docker-compose.*.yml` is included as a separate template entry.
 4. Each template entry contains:
    - `type`: `3` (Portainer stack type for Docker Compose)
-   - `title`: derived from the recipe filename (e.g. `docker-compose.postgres.5432.yml` → `postgres`)
+   - `title`: the recipe filename minus the `.yml` extension (e.g. `docker-compose.postgres.5432.yml` → `docker-compose.postgres.5432`)
    - `description`: empty string (no metadata file needed for MVP)
    - `logo`: empty string
    - `compose`: the raw contents of the recipe YAML file (inline, not a URL)
@@ -54,7 +54,7 @@ Portainer supports a custom "App Templates" endpoint that lets users provision D
 - [ ] `GET /portainer` returns HTTP 200 with `Content-Type: application/json`.
 - [ ] Response is valid Portainer App Templates v2 JSON (`version: "2"`, `templates` array).
 - [ ] Each recipe file in `recipes/` produces exactly one template entry.
-- [ ] `title` is correctly derived from the recipe filename (service name portion only).
+- [ ] `title` is the recipe filename minus the `.yml` extension (e.g. `docker-compose.postgres.5432`).
 - [ ] `compose` field contains the full, unmodified YAML content of the recipe file.
 - [ ] `env` array contains one entry per unique `${VAR}` / `${VAR:-default}` substitution found in the YAML.
 - [ ] Env entries with a default value include the `default` field; those without do not.
@@ -73,5 +73,5 @@ Portainer supports a custom "App Templates" endpoint that lets users provision D
 
 - Portainer App Templates v2 spec: `type: 3` = Docker Compose stack (as opposed to `1` = container, `2` = Swarm).
 - The `name` field on a Portainer template is deprecated in v2; `title` is used instead.
-- Recipe filenames follow the pattern `docker-compose.<service>.<ports>.yml`; the title should extract `<service>` only (e.g. `postgres`, `ollama-cpu`).
+- Recipe filenames follow the pattern `docker-compose.<service>.<ports>.yml`; the title is the full filename minus the `.yml` extension (e.g. `docker-compose.postgres.5432`, `docker-compose.ollama-cpu.9001-9002`).
 - Env var scanning should operate on raw text (not parsed YAML) to avoid dependencies on a YAML library.
