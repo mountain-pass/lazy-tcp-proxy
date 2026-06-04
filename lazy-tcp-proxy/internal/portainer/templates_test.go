@@ -71,7 +71,7 @@ POSTGRES_DB: ${POSTGRES_DB:-postgres}
 
 func TestBuildTemplates_emptyDir(t *testing.T) {
 	out := BuildTemplates("/nonexistent/path/that/does/not/exist", "http://localhost")
-	if out.Version != "2" {
+	if out.Version != "3" {
 		t.Errorf("expected version '2', got %q", out.Version)
 	}
 	if len(out.Templates) != 0 {
@@ -150,7 +150,7 @@ func TestTemplatesHandler_returnsJSON(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		t.Fatalf("invalid JSON: %v", err)
 	}
-	if out.Version != "2" {
+	if out.Version != "3" {
 		t.Errorf("version: want '2' got %q", out.Version)
 	}
 	if len(out.Templates) != 1 {
