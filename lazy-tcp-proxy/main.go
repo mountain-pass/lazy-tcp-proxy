@@ -383,7 +383,8 @@ func runStatusServer(ctx context.Context, srv *proxy.ProxyServer, port int, trae
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(traefikpkg.BuildConfig(snaps, traefikProxyHost, traefikEntryPoint, traefikCertResolver, webHost, webPort, traefikTimeouts)) //nolint:errcheck
 	})
-	mux.HandleFunc("/portainer", portainerpkg.Handler(recipesDir))
+	mux.HandleFunc("/portainer/templates", portainerpkg.TemplatesHandler(recipesDir))
+	mux.Handle("/portainer/git/", portainerpkg.GitHandler(recipesDir))
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprint(w, "ok") //nolint:errcheck
@@ -559,7 +560,7 @@ func main() {
 	configPath := resolveConfigPath()
 	recipesDir := resolveRecipesDir(configPath)
 	ensureDir(recipesDir)
-	log.Printf("portainer app templates: GET /portainer available (RECIPES_DIR=%s)", recipesDir)
+	log.Printf("portainer: GET /portainer/templates and git clone /portainer/git available (RECIPES_DIR=%s)", recipesDir)
 
 	// Start the HTTP status server
 	webPort := resolveWebPort()

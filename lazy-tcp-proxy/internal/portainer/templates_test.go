@@ -70,7 +70,7 @@ POSTGRES_DB: ${POSTGRES_DB:-postgres}
 }
 
 func TestBuildTemplates_emptyDir(t *testing.T) {
-	out := BuildTemplates("/nonexistent/path/that/does/not/exist")
+	out := BuildTemplates("/nonexistent/path/that/does/not/exist", "http://localhost")
 	if out.Version != "2" {
 		t.Errorf("expected version '2', got %q", out.Version)
 	}
@@ -86,7 +86,7 @@ func TestBuildTemplates_singleRecipe(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out := BuildTemplates(dir)
+	out := BuildTemplates(dir, "http://localhost:8080")
 	if len(out.Templates) != 1 {
 		t.Fatalf("expected 1 template, got %d", len(out.Templates))
 	}
@@ -97,8 +97,11 @@ func TestBuildTemplates_singleRecipe(t *testing.T) {
 	if tmpl.Type != 3 {
 		t.Errorf("type: want 3 got %d", tmpl.Type)
 	}
-	if tmpl.Compose != content {
-		t.Errorf("compose mismatch")
+	if tmpl.Repository.URL != "http://localhost:8080/portainer/git" {
+		t.Errorf("repository.url: want %q got %q", "http://localhost:8080/portainer/git", tmpl.Repository.URL)
+	}
+	if tmpl.Repository.StackFile != "docker-compose.whoami.9003.yml" {
+		t.Errorf("repository.stackfile: want %q got %q", "docker-compose.whoami.9003.yml", tmpl.Repository.StackFile)
 	}
 	if len(tmpl.Env) != 1 || tmpl.Env[0].Name != "PORT" {
 		t.Errorf("unexpected env: %+v", tmpl.Env)
@@ -112,7 +115,7 @@ func TestBuildTemplates_sorted(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	out := BuildTemplates(dir)
+	out := BuildTemplates(dir, "http://localhost")
 	if len(out.Templates) != 3 {
 		t.Fatalf("expected 3 templates, got %d", len(out.Templates))
 	}
@@ -125,15 +128,16 @@ func TestBuildTemplates_sorted(t *testing.T) {
 	}
 }
 
-func TestHandler_returnsJSON(t *testing.T) {
+func TestTemplatesHandler_returnsJSON(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "docker-compose.test.yml"), []byte("name: test\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/portainer", nil)
+	req := httptest.NewRequest(http.MethodGet, "/portainer/templates", nil)
+	req.Host = "localhost:8080"
 	w := httptest.NewRecorder()
-	Handler(dir)(w, req)
+	TemplatesHandler(dir)(w, req)
 
 	resp := w.Result()
 	if resp.StatusCode != http.StatusOK {
@@ -151,5 +155,8 @@ func TestHandler_returnsJSON(t *testing.T) {
 	}
 	if len(out.Templates) != 1 {
 		t.Errorf("expected 1 template, got %d", len(out.Templates))
+	}
+	if out.Templates[0].Repository.URL != "http://localhost:8080/portainer/git" {
+		t.Errorf("repository.url mismatch: %q", out.Templates[0].Repository.URL)
 	}
 }

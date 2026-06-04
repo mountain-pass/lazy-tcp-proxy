@@ -89,7 +89,7 @@ Configure via environment variables:
 | `START_TIMEOUT_SECS`  | How long (in seconds) to wait for an upstream to be ready after a cold start — applies to the UDP datagram readiness probe, the HTTP health check (`lazy-tcp-proxy.http-healthcheck`), and the Docker HEALTHCHECK readiness gate. If the timeout is reached the connection/flow is dropped. Override per-container with the `lazy-tcp-proxy.start-timeout-secs` label | 30 |
 | `POLL_INTERVAL_SECS`  | How often (in seconds) to check for idle containers                | 15                        |
 | `DOCKER_SOCK`         | Path to Docker socket                                              | `/var/run/docker.sock`    |
-| `WEB_PORT`            | Port for the HTTP web server (dashboard, `/metrics`, `/traefik`, `/portainer`, `/health`); set to `0` to disable. `STATUS_PORT` is accepted as a legacy alias | 8080 |
+| `WEB_PORT`            | Port for the HTTP web server (dashboard, `/metrics`, `/traefik`, `/portainer/templates`, `/portainer/git`, `/health`); set to `0` to disable. `STATUS_PORT` is accepted as a legacy alias | 8080 |
 | `WEB_HOST`            | When set, exposes lazy-tcp-proxy's web endpoint via Traefik: adds `Host('<WEB_HOST>') → http://<TRAEFIK_PROXY_HOST>:<WEB_PORT>` to `/traefik`. Unset = no Traefik route for the web endpoint | *(none)* |
 | `STATUS_PORT`         | Legacy alias for `WEB_PORT`; ignored when `WEB_PORT` is set       | 8080                      |
 | `CONFIG_PATH`         | Path to the dynamic YAML config file (see [README_CONFIG.md](README_CONFIG.md)) | `/etc/lazy-tcp-proxy/config.yaml` |
@@ -177,13 +177,14 @@ curl http://localhost:8080/health
 
 ### Setup
 
-In Portainer: **Settings → App Templates → URL** → set to:
+1. Place your `*.yml` Docker Compose recipe files in `RECIPES_DIR` (default: `/etc/lazy-tcp-proxy/recipes/`).
+2. In Portainer: **Settings → App Templates → URL** → set to:
 
 ```
-http://<proxy-host>:8080/portainer
+http://<proxy-host>:8080/portainer/templates
 ```
 
-On the next page load, all recipes appear in the **App Templates** list. Each template shows its configurable environment variables (detected automatically from `${VAR:-default}` patterns in the YAML) as editable fields in the Portainer deploy wizard.
+On the next page load, all recipes appear in the **App Templates** list. Each template shows its configurable environment variables (detected automatically from `${VAR:-default}` patterns in the YAML) as editable fields in the Portainer deploy wizard. Portainer clones the recipe files via the built-in git endpoint at `/portainer/git`.
 
 ### Configuration
 
@@ -191,12 +192,25 @@ On the next page load, all recipes appear in the **App Templates** list. Each te
 |----------|---------|-------------|
 | `RECIPES_DIR` | `<dir of CONFIG_PATH>/recipes` | Directory containing `*.yml` recipe files to serve |
 
-The directory is created automatically on startup if it does not exist. Mount your own recipe files or use the built-in [recipes](recipes) directory.
+The directory is created automatically on startup if it does not exist.
 
-### Response format
+### Endpoints
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /portainer/templates` | Portainer App Templates v2 JSON — set this as the App Templates URL in Portainer |
+| `GET /portainer/git` | Read-only git Smart HTTP endpoint — Portainer clones recipe files from here |
+
+You can also clone the recipes directly:
 
 ```sh
-curl http://localhost:8080/portainer
+git clone http://<proxy-host>:8080/portainer/git
+```
+
+### Response format (`/portainer/templates`)
+
+```sh
+curl http://localhost:8080/portainer/templates
 ```
 
 ```json
@@ -206,9 +220,10 @@ curl http://localhost:8080/portainer
     {
       "type": 3,
       "title": "docker-compose.postgres.5432",
-      "description": "",
-      "logo": "",
-      "compose": "name: postgres\n\nservices:\n  postgres:\n    ...",
+      "repository": {
+        "url": "http://localhost:8080/portainer/git",
+        "stackfile": "docker-compose.postgres.5432.yml"
+      },
       "env": [
         { "name": "POSTGRES_USER",     "label": "POSTGRES_USER",     "default": "admin" },
         { "name": "POSTGRES_PASSWORD", "label": "POSTGRES_PASSWORD", "default": "password" },
@@ -219,7 +234,7 @@ curl http://localhost:8080/portainer
 }
 ```
 
-The endpoint is public (no authentication required). If `RECIPES_DIR` is missing or empty, an empty templates list is returned.
+Both endpoints are public (no authentication required). If `RECIPES_DIR` is missing or empty, `/portainer/templates` returns an empty list and `/portainer/git` serves an empty repository.
 
 ---
 

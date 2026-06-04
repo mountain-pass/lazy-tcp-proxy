@@ -2,7 +2,7 @@
 
 **Requirement**: [2026-06-04-portainer-git-http-endpoint.md](2026-06-04-portainer-git-http-endpoint.md)
 **Date**: 2026-06-04
-**Status**: Draft
+**Status**: Implemented
 
 ## Implementation Steps
 
