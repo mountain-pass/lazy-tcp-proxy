@@ -1,0 +1,73 @@
+name: traefik
+
+# Architecture:
+#   User → Traefik (:443) → lazy-tcp-proxy (:9001) → whoami (internal)
+#
+# Traefik polls http://lazy-tcp-proxy:8080/traefik every 5s for routing config.
+# lazy-tcp-proxy starts/stops the whoami container on demand.
+
+services:
+
+  lazy-tcp-proxy:
+    image: mountainpass/lazy-tcp-proxy
+    container_name: lazy-tcp-proxy
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./lazy-tcp-proxy:/etc/lazy-tcp-proxy/
+    ports:
+      - "8080:8080"
+    networks:
+      - proxy-net
+    labels:
+      - "io.portainer.hidden=true"
+    restart: unless-stopped
+
+  traefik:
+    image: traefik:v3
+    container_name: traefik
+    command:
+      - "--log.level=DEBUG"
+      - "--entrypoints.websecure.address=:443"
+      - "--entryPoints.websecure.transport.respondingTimeouts.readTimeout=0"
+      # provider
+      - "--providers.http.endpoint=http://lazy-tcp-proxy:8080/traefik"
+      - "--providers.http.pollinterval=5s"
+      # certificate resolver
+      - "--certificatesresolvers.myresolver.acme.tlschallenge=true"
+      - "--certificatesresolvers.myresolver.acme.email=info@mountain-pass.com.au"
+      - "--certificatesresolvers.myresolver.acme.storage=/letsencrypt/acme.json"
+    ports:
+      - "443:443"
+    volumes:
+      - "./traefik/letsencrypt:/letsencrypt"
+    networks:
+      - proxy-net
+    labels:
+      - "io.portainer.hidden=true"
+    restart: unless-stopped
+
+  # docker run --rm httpd:2.4-alpine htpasswd -nbB admin 'superpassword' | cut -d ":" -f 2
+  # If resetting the password, ensure you remote the persisted
+  portainer:
+    image: portainer/portainer-ce
+    container_name: portainer
+    command: >
+      --admin-password '$$2y$$05$$0Ss4ECZ1vO5IC7xMa5yAQOAhnRKu2iLR4yWvpQpaVImdFVemWWs6u'
+      --hide-label io.portainer.hidden=true
+      --templates http://lazy-tcp-proxy:8080/portainer/templates
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./portainer:/data 
+    ports:
+      - "9000:9000"
+    networks:
+      - proxy-net
+    labels:
+      - "io.portainer.hidden=true"
+    restart: unless-stopped
+
+networks:
+  # Shared by Traefik and lazy-tcp-proxy so Traefik can reach lazy-tcp-proxy's listen ports.
+  proxy-net:
+    driver: bridge
+

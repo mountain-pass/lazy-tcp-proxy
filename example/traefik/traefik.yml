@@ -1,8 +1,0 @@
-entryPoints:
-  web:
-    address: ":80"
-
-providers:
-  http:
-    endpoint: "http://lazy-tcp-proxy:8080/traefik"
-    pollInterval: "5s"
