@@ -71,6 +71,21 @@ func resolvePollInterval() time.Duration {
 	return time.Duration(n) * time.Second
 }
 
+const defaultListenStartPort = 8000
+
+func resolveListenStartPort() int {
+	raw := os.Getenv("LISTEN_START_PORT")
+	if raw == "" {
+		return defaultListenStartPort
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n <= 0 {
+		log.Printf("LISTEN_START_PORT=%q is invalid; using default %d", raw, defaultListenStartPort)
+		return defaultListenStartPort
+	}
+	return n
+}
+
 const defaultWebPort = 8080
 
 func resolveWebPort() int {
@@ -448,6 +463,9 @@ type backendManager interface {
 	// SetComposeDir sets the directory scanned for compose files and image archives
 	// when re-provisioning a missing container. No-op on Kubernetes.
 	SetComposeDir(dir string)
+	// SetPortAllocator wires the dynamic port allocator used to assign listen ports
+	// to traefik_hosts / traefik_tcp_hosts label entries.
+	SetPortAllocator(a *types.PortAllocator)
 }
 
 // discoverAndApply runs backend discovery, applies the YAML config overlay,
@@ -590,7 +608,13 @@ func main() {
 	mgr.SetComposeDir(composeDir)
 	srv.SetComposeDir(composeDir)
 	log.Printf("compose dir: %s (set COMPOSE_DIR to override)", composeDir)
+	listenStartPort := resolveListenStartPort()
+	log.Printf("traefik host port allocator: starting at port %d (set LISTEN_START_PORT to override)", listenStartPort)
+	portAlloc := types.NewPortAllocator(listenStartPort)
+	mgr.SetPortAllocator(portAlloc)
+
 	store := config.New(configPath)
+	store.SetPortAllocator(portAlloc)
 	if err := store.Load(); err != nil {
 		log.Fatalf("failed to load config file: %v", err)
 	}

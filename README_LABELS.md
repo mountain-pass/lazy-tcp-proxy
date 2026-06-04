@@ -31,10 +31,10 @@ Add these labels to any container you want proxied/managed:
 | `lazy-tcp-proxy.tls` | No | Set to `true` to wrap the listener with TLS using a shared self-signed certificate. Works with any TCP protocol, not only HTTP (see [TLS Termination](#tls-termination)) |
 | `lazy-tcp-proxy.api-key` | No | Comma-separated list of accepted values for the `X-API-Key` header. Any matching key is accepted. Missing or incorrect key → `401 Unauthorized`. The header is stripped before forwarding (see [API Key Authentication](#api-key-authentication)) |
 | `lazy-tcp-proxy.basic-auth` | No | Comma-separated list of `user:hashedpassword` credentials in htpasswd bcrypt format. Any matching credential is accepted via `Authorization: Basic`. Missing or incorrect credentials → `401 Unauthorized` with `WWW-Authenticate`. The header is stripped before forwarding (see [Basic Auth Authentication](#basic-auth-authentication)) |
-| `lazy-tcp-proxy.traefik-hosts` | No | Comma-separated `<domain>:<listen_port>` pairs — exposes these mappings via `GET /traefik` for Traefik's HTTP provider (see [Traefik Integration](#traefik-integration)) |
-| `lazy-tcp-proxy.traefik-tcp-hosts` | No | Comma-separated `<domain>:<listen_port>` pairs — generates Traefik TCP SNI routers on the `websecure` entrypoint (see [TCP SNI routing](#tcp-sni-routing-traefik-tcp-hosts)) |
+| `lazy-tcp-proxy.traefik-hosts` | No | Comma-separated `<domain>:<target_port>` pairs — lazy-tcp-proxy auto-assigns a listen port (starting from `LISTEN_START_PORT`) and exposes the mapping via `GET /traefik` for Traefik's HTTP provider (see [Traefik Integration](#traefik-integration)) |
+| `lazy-tcp-proxy.traefik-tcp-hosts` | No | Comma-separated `<domain>:<target_port>` pairs — lazy-tcp-proxy auto-assigns a listen port and generates Traefik TCP SNI routers on the `websecure` entrypoint (see [TCP SNI routing](#tcp-sni-routing-traefik-tcp-hosts)) |
 
-\* At least one of `lazy-tcp-proxy.ports` or `lazy-tcp-proxy.udp-ports` must be set. A container may use TCP only, UDP only, or both.
+\* At least one of `lazy-tcp-proxy.ports`, `lazy-tcp-proxy.udp-ports`, `lazy-tcp-proxy.traefik-hosts`, or `lazy-tcp-proxy.traefik-tcp-hosts` must be set.
 
 Both `allow-list` and `block-list` accept plain IP addresses (e.g. `127.0.0.1`, `::1`) and CIDR ranges (e.g. `192.168.0.0/16`, `fd00::/8`). If both labels are set, the allow-list is evaluated first. Blocked connections are logged with a red `(blocked)` suffix and do **not** wake the container.
 
@@ -603,46 +603,60 @@ restart is needed when containers are added or removed.
 ### Label
 
 ```
-lazy-tcp-proxy.traefik-hosts=<domain>:<listen_port>
+lazy-tcp-proxy.traefik-hosts=<domain>:<target_port>
 ```
 
-Each entry maps a domain name to one of this container's listen ports. Multiple entries are
-comma-separated. The `<listen_port>` is the port lazy-tcp-proxy binds on the host (the left side
-of the `ports` mapping).
+Each entry maps a domain name to the container's own target port. Multiple entries are
+comma-separated. lazy-tcp-proxy automatically assigns a unique listen port to each domain,
+starting from `LISTEN_START_PORT` (default `8000`). No manual port coordination is required.
 
-**Single port:**
+**Single service — auto-assigned listen port:**
 ```yaml
 labels:
   - "lazy-tcp-proxy.enabled=true"
-  - "lazy-tcp-proxy.ports=9001:80"
-  - "lazy-tcp-proxy.traefik-hosts=whoami.localhost:9001"
+  - "lazy-tcp-proxy.traefik-hosts=whoami.localhost:80"
+  # listen port is auto-assigned, e.g. 8000 → Traefik routes whoami.localhost → proxy:8000
 ```
 
-**Multiple domains (including from a port range):**
+**Multiple domains on the same container:**
 ```yaml
 labels:
   - "lazy-tcp-proxy.enabled=true"
-  - "lazy-tcp-proxy.ports=9000-9099:9000-9099"
-  - "lazy-tcp-proxy.traefik-hosts=app1.localhost:9000,app2.localhost:9005"
+  - "lazy-tcp-proxy.traefik-hosts=app1.localhost:8080,app2.localhost:8081"
+  # app1.localhost gets 8000, app2.localhost gets 8001
+```
+
+**Using explicit `ports` alongside `traefik-hosts`:**
+
+Explicit `lazy-tcp-proxy.ports` mappings take precedence. The allocator skips any port
+already claimed by an explicit mapping.
+
+```yaml
+labels:
+  - "lazy-tcp-proxy.enabled=true"
+  - "lazy-tcp-proxy.ports=8500:9000"
+  - "lazy-tcp-proxy.traefik-hosts=myapp.example.com:9000"
+  # 8500 is claimed; traefik-hosts listen port starts at 8001 (or next free)
 ```
 
 ### What gets generated
 
-For each `traefik-hosts` entry, lazy-tcp-proxy emits one Traefik HTTP router and one HTTP service:
+For each `traefik-hosts` entry, lazy-tcp-proxy emits one Traefik HTTP router and one HTTP service.
+The listen port is the auto-assigned port (e.g. `8000` for the first service):
 
 ```json
 {
   "http": {
     "routers": {
-      "whoami-localhost-9001-router": {
+      "whoami-localhost-8000-router": {
         "rule": "Host(`whoami.localhost`)",
-        "service": "whoami-localhost-9001-service"
+        "service": "whoami-localhost-8000-service"
       }
     },
     "services": {
-      "whoami-localhost-9001-service": {
+      "whoami-localhost-8000-service": {
         "loadBalancer": {
-          "servers": [{ "url": "http://lazy-tcp-proxy:9001" }]
+          "servers": [{ "url": "http://lazy-tcp-proxy:8000" }]
         }
       }
     }
@@ -656,6 +670,7 @@ For each `traefik-hosts` entry, lazy-tcp-proxy emits one Traefik HTTP router and
 
 | Variable | Default | Description |
 |---|---|---|
+| `LISTEN_START_PORT` | `8000` | Starting listen port for dynamically assigned ports (used by `traefik-hosts` / `traefik-tcp-hosts`). Ports already claimed by explicit `lazy-tcp-proxy.ports` / `udp-ports` labels are skipped |
 | `TRAEFIK_PROXY_HOST` | `lazy-tcp-proxy` | Hostname/IP Traefik uses to reach lazy-tcp-proxy's listen ports |
 | `TRAEFIK_ENTRYPOINT` | `websecure` | Traefik entry point name added to every generated router's `entryPoints`; set to `""` to omit |
 | `TRAEFIK_CERTRESOLVER` | `myresolver` | Cert resolver name added to every generated router's `tls.certResolver`; set to `""` to omit |
@@ -684,35 +699,36 @@ This allows multiple TCP services to share port 443 (`websecure`) and be disting
 domain name alone.
 
 ```
-lazy-tcp-proxy.traefik-tcp-hosts=<domain>:<listen_port>
+lazy-tcp-proxy.traefik-tcp-hosts=<domain>:<target_port>
 ```
 
-The same format as `traefik-hosts`: comma-separated `domain:listen_port` pairs.
+The same format as `traefik-hosts`: comma-separated `domain:target_port` pairs. The listen port
+is auto-assigned from `LISTEN_START_PORT` (default `8000`).
 
 **Example — MongoDB behind Traefik:**
 ```yaml
 labels:
   - "lazy-tcp-proxy.enabled=true"
-  - "lazy-tcp-proxy.ports=27015:27017"
-  - "lazy-tcp-proxy.traefik-tcp-hosts=mongo.example.com:27015"
+  - "lazy-tcp-proxy.traefik-tcp-hosts=mongo.example.com:27017"
+  # listen port auto-assigned, e.g. 8000 → Traefik routes mongo.example.com SNI → proxy:8000
 ```
 
-**Generated TCP section:**
+**Generated TCP section** (assuming `LISTEN_START_PORT=8000` and this is the first service):
 ```json
 {
   "tcp": {
     "routers": {
-      "mongo-example-com-27015-router": {
+      "mongo-example-com-8000-router": {
         "entryPoints": ["websecure"],
         "rule": "HostSNI(`mongo.example.com`)",
-        "service": "mongo-example-com-27015-service",
+        "service": "mongo-example-com-8000-service",
         "tls": { "certResolver": "myresolver" }
       }
     },
     "services": {
-      "mongo-example-com-27015-service": {
+      "mongo-example-com-8000-service": {
         "loadBalancer": {
-          "servers": [{ "address": "lazy-tcp-proxy:27015" }]
+          "servers": [{ "address": "lazy-tcp-proxy:8000" }]
         }
       }
     }

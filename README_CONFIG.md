@@ -65,9 +65,9 @@ services:
 #    basic_auth:
 #      - "user:$2y$12$hashedpassword"   # htpasswd bcrypt hash (use: docker run --rm --entrypoint htpasswd httpd:2 -Bbn user password)
 #    traefik_hosts:
-#      - "myapp.localhost:9000"
+#      - "myapp.localhost:8080"    # domain:target_port — listen port auto-assigned from LISTEN_START_PORT
 #    traefik_tcp_hosts:
-#      - "mongo.localhost:27015"
+#      - "mongo.localhost:27017"   # domain:target_port — listen port auto-assigned from LISTEN_START_PORT
 ```
 
 ### Docker Compose setup
@@ -123,9 +123,9 @@ services:
     basic_auth:                   # require Authorization: Basic; passwords must be bcrypt hashes (htpasswd format)
       - "nick:$2y$12$..."         # generate with: docker run --rm --entrypoint htpasswd httpd:2 -Bbn nick somepassword
     traefik_hosts:
-      - "myapp.localhost:9000"    # domain:listen_port pairs for Traefik HTTP provider
+      - "myapp.localhost:8080"    # domain:target_port — listen port auto-assigned from LISTEN_START_PORT
     traefik_tcp_hosts:
-      - "mongo.localhost:9001"    # domain:listen_port pairs for Traefik TCP SNI routing
+      - "mongo.localhost:27017"   # domain:target_port — listen port auto-assigned from LISTEN_START_PORT
 ```
 
 See [README_LABELS.md](README_LABELS.md) for full descriptions of each field — the YAML fields

@@ -187,10 +187,13 @@ func ParseIdleTimeoutLabel(name, raw string) *time.Duration {
 	return &d
 }
 
-// ParseTraefikHosts parses a comma-separated list of "domain:listen_port" entries
-// from the lazy-tcp-proxy.traefik-hosts label. Invalid entries are skipped with a warning.
-func ParseTraefikHosts(label, s string) []string {
-	var out []string
+// ParseTraefikHostSpecs parses a comma-separated list of "domain:target_port" entries
+// from the lazy-tcp-proxy.traefik-hosts or traefik-tcp-hosts label.
+// The port is the container's own target port; the listen port is assigned dynamically
+// by the PortAllocator. Entries with an empty domain or non-integer port are skipped
+// with a warning.
+func ParseTraefikHostSpecs(label, s string) []TraefikHostSpec {
+	var out []TraefikHostSpec
 	for _, token := range strings.Split(s, ",") {
 		entry := strings.TrimSpace(token)
 		if entry == "" {
@@ -201,11 +204,17 @@ func ParseTraefikHosts(label, s string) []string {
 			log.Printf("label %s: ignoring invalid traefik-hosts entry %q: expected domain:port", label, entry)
 			continue
 		}
-		if _, err := strconv.Atoi(entry[idx+1:]); err != nil {
+		domain := strings.TrimSpace(entry[:idx])
+		if domain == "" {
+			log.Printf("label %s: ignoring traefik-hosts entry %q: domain is empty", label, entry)
+			continue
+		}
+		tp, err := strconv.Atoi(strings.TrimSpace(entry[idx+1:]))
+		if err != nil {
 			log.Printf("label %s: ignoring invalid traefik-hosts entry %q: port must be an integer", label, entry)
 			continue
 		}
-		out = append(out, entry)
+		out = append(out, TraefikHostSpec{Domain: domain, TargetPort: tp})
 	}
 	return out
 }

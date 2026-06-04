@@ -1,0 +1,84 @@
+package types
+
+import (
+	"fmt"
+	"sync"
+)
+
+// TraefikHostSpec is a parsed traefik_hosts / traefik_tcp_hosts label entry.
+// Domain is the hostname; TargetPort is the container's own listening port.
+type TraefikHostSpec struct {
+	Domain     string
+	TargetPort int
+}
+
+// PortAllocator assigns sequential listen ports to traefik host entries,
+// starting from a configurable base port. It tracks all claimed ports (from
+// explicit lazy-tcp-proxy.ports / udp-ports mappings and prior allocations)
+// and skips them when assigning new ones.
+//
+// Allocated ports are never freed, keeping the domain→port mapping stable
+// while Traefik refreshes its config.
+type PortAllocator struct {
+	mu       sync.Mutex
+	base     int
+	claimed  map[int]struct{}
+	assigned map[string]int // domain → assigned listen port
+}
+
+// NewPortAllocator creates a PortAllocator that starts assigning ports at base.
+func NewPortAllocator(base int) *PortAllocator {
+	return &PortAllocator{
+		base:     base,
+		claimed:  make(map[int]struct{}),
+		assigned: make(map[string]int),
+	}
+}
+
+// ClaimPorts marks the listen ports in mappings as taken so the allocator
+// will not assign them dynamically. Call this with the explicit ports parsed
+// from lazy-tcp-proxy.ports and lazy-tcp-proxy.udp-ports labels before
+// calling AllocateForHosts.
+func (a *PortAllocator) ClaimPorts(mappings []PortMapping) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, m := range mappings {
+		a.claimed[m.ListenPort] = struct{}{}
+	}
+}
+
+// AllocateForHosts resolves a slice of TraefikHostSpec into
+// "domain:listen_port" strings suitable for TargetInfo.TraefikHosts.
+//
+// Each unique domain receives one listen port. If a domain was previously
+// allocated it reuses the same port (stable across re-registrations).
+// Specs with an empty Domain are silently skipped.
+func (a *PortAllocator) AllocateForHosts(specs []TraefikHostSpec) []string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	out := make([]string, 0, len(specs))
+	for _, spec := range specs {
+		if spec.Domain == "" {
+			continue
+		}
+		if p, ok := a.assigned[spec.Domain]; ok {
+			out = append(out, fmt.Sprintf("%s:%d", spec.Domain, p))
+			continue
+		}
+		p := a.nextFree()
+		a.assigned[spec.Domain] = p
+		a.claimed[p] = struct{}{}
+		out = append(out, fmt.Sprintf("%s:%d", spec.Domain, p))
+	}
+	return out
+}
+
+func (a *PortAllocator) nextFree() int {
+	p := a.base
+	for {
+		if _, taken := a.claimed[p]; !taken {
+			return p
+		}
+		p++
+	}
+}
