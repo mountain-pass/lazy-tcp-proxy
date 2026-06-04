@@ -414,3 +414,59 @@ func TestEffectiveAvailability_ExplicitOnDemandOverridesCronExpressions(t *testi
 		t.Errorf("explicit ondemand should override cron expressions; got %q", got)
 	}
 }
+
+// ---- ParseTraefikHostSpecs ----
+
+func TestParseTraefikHostSpecs_Valid(t *testing.T) {
+	got := ParseTraefikHostSpecs("test", "s3.example.com:9000,mongo.example.com:27017")
+	if len(got) != 2 {
+		t.Fatalf("expected 2 specs, got %d", len(got))
+	}
+	if got[0].Domain != "s3.example.com" || got[0].TargetPort != 9000 {
+		t.Errorf("spec 0: got %+v", got[0])
+	}
+	if got[1].Domain != "mongo.example.com" || got[1].TargetPort != 27017 {
+		t.Errorf("spec 1: got %+v", got[1])
+	}
+}
+
+func TestParseTraefikHostSpecs_InvalidPort(t *testing.T) {
+	got := ParseTraefikHostSpecs("test", "bad.host:notanumber")
+	if len(got) != 0 {
+		t.Errorf("expected empty slice, got %+v", got)
+	}
+}
+
+func TestParseTraefikHostSpecs_EmptyDomain(t *testing.T) {
+	got := ParseTraefikHostSpecs("test", ":8000")
+	if len(got) != 0 {
+		t.Errorf("expected empty slice for blank domain, got %+v", got)
+	}
+}
+
+func TestParseTraefikHostSpecs_MixedEmptyDomain(t *testing.T) {
+	got := ParseTraefikHostSpecs("test", "good.com:9000,:8000")
+	if len(got) != 1 {
+		t.Fatalf("expected 1 spec, got %d", len(got))
+	}
+	if got[0].Domain != "good.com" || got[0].TargetPort != 9000 {
+		t.Errorf("spec 0: got %+v", got[0])
+	}
+}
+
+func TestParseTraefikHostSpecs_MissingColon(t *testing.T) {
+	got := ParseTraefikHostSpecs("test", "nodomain")
+	if len(got) != 0 {
+		t.Errorf("expected empty slice for missing colon, got %+v", got)
+	}
+}
+
+func TestParseTraefikHostSpecs_WhitespaceAround(t *testing.T) {
+	got := ParseTraefikHostSpecs("test", "  myapp.local : 8080 ")
+	if len(got) != 1 {
+		t.Fatalf("expected 1 spec, got %d", len(got))
+	}
+	if got[0].Domain != "myapp.local" || got[0].TargetPort != 8080 {
+		t.Errorf("spec 0: got %+v", got[0])
+	}
+}

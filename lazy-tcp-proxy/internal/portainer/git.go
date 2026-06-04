@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -143,17 +144,46 @@ func serveInfoRefs(snap repoSnapshot, w http.ResponseWriter) {
 	w.Header().Set("Cache-Control", "no-cache")
 	_, _ = w.Write(pktLine("# service=git-upload-pack\n"))
 	_, _ = w.Write(pktFlush)
-	_, _ = w.Write(pktLine(sha + " HEAD\x00symref=HEAD:refs/heads/main agent=lazy-tcp-proxy\n"))
+	_, _ = w.Write(pktLine(sha + " HEAD\x00symref=HEAD:refs/heads/main side-band-64k agent=lazy-tcp-proxy\n"))
 	_, _ = w.Write(pktLine(sha + " refs/heads/main\n"))
 	_, _ = w.Write(pktFlush)
 }
 
 func serveUploadPack(snap repoSnapshot, w http.ResponseWriter, r *http.Request) {
-	_, _ = io.ReadAll(r.Body)
+	body, _ := io.ReadAll(r.Body)
+	log.Printf("git-upload-pack request body (%d bytes): %q", len(body), body)
+
 	w.Header().Set("Content-Type", "application/x-git-upload-pack-result")
 	w.Header().Set("Cache-Control", "no-cache")
+
+	// When the client requests a shallow clone (deepen N), the protocol requires
+	// the server to send a "shallow <sha>" line for the boundary commit before NAK.
+	if bytes.Contains(body, []byte("deepen")) {
+		sha := fmt.Sprintf("%x", snap.commitSHA)
+		log.Printf("git-upload-pack: sending shallow %s", sha)
+		_, _ = w.Write(pktLine("shallow " + sha + "\n"))
+		_, _ = w.Write(pktFlush)
+	}
+
 	_, _ = w.Write(pktLine("NAK\n"))
-	_, _ = w.Write(snap.packData)
+
+	useSideband := bytes.Contains(body, []byte("side-band"))
+	log.Printf("git-upload-pack: useSideband=%v packSize=%d", useSideband, len(snap.packData))
+	if useSideband {
+		const chunkSize = 65516
+		for len(snap.packData) > 0 {
+			n := len(snap.packData)
+			if n > chunkSize {
+				n = chunkSize
+			}
+			chunk := append([]byte{0x01}, snap.packData[:n]...)
+			_, _ = w.Write(pktLine(string(chunk)))
+			snap.packData = snap.packData[n:]
+		}
+		_, _ = w.Write(pktFlush)
+	} else {
+		_, _ = w.Write(snap.packData)
+	}
 }
 
 // GitHandler returns an http.Handler that serves a read-only git Smart HTTP

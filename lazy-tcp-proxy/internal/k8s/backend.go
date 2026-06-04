@@ -30,7 +30,12 @@ type Backend struct {
 	namespace    string // "" = all namespaces
 	mu           sync.RWMutex
 	serviceNames map[string]string // targetID → Service name override
+	portAlloc    *types.PortAllocator
 }
+
+// SetPortAllocator wires the dynamic port allocator used to assign listen ports
+// to traefik_hosts / traefik_tcp_hosts annotation entries.
+func (b *Backend) SetPortAllocator(a *types.PortAllocator) { b.portAlloc = a }
 
 // NewBackend creates a Backend. It auto-detects config: in-cluster when running
 // inside a pod, falling back to KUBECONFIG / ~/.kube/config for local use.
@@ -284,8 +289,10 @@ func (b *Backend) deploymentToTargetInfo(d appsv1.Deployment) (types.TargetInfo,
 
 	portsStr := ann["lazy-tcp-proxy.ports"]
 	udpPortsStr := ann["lazy-tcp-proxy.udp-ports"]
-	if portsStr == "" && udpPortsStr == "" {
-		return types.TargetInfo{}, fmt.Errorf("missing annotation lazy-tcp-proxy.ports or lazy-tcp-proxy.udp-ports")
+	traefikHostsStr := strings.TrimSpace(ann["lazy-tcp-proxy.traefik-hosts"])
+	traefikTCPHostsStr := strings.TrimSpace(ann["lazy-tcp-proxy.traefik-tcp-hosts"])
+	if portsStr == "" && udpPortsStr == "" && traefikHostsStr == "" && traefikTCPHostsStr == "" {
+		return types.TargetInfo{}, fmt.Errorf("missing required annotation: one of lazy-tcp-proxy.ports, lazy-tcp-proxy.udp-ports, lazy-tcp-proxy.traefik-hosts, lazy-tcp-proxy.traefik-tcp-hosts")
 	}
 	var ports []types.PortMapping
 	if portsStr != "" {
@@ -346,6 +353,20 @@ func (b *Backend) deploymentToTargetInfo(d appsv1.Deployment) (types.TargetInfo,
 	apiKey := types.ParseAuthList("lazy-tcp-proxy.api-key", ann["lazy-tcp-proxy.api-key"])
 	basicAuth := types.ParseAuthList("lazy-tcp-proxy.basic-auth", ann["lazy-tcp-proxy.basic-auth"])
 
+	var traefikHosts, traefikTCPHosts []string
+	if b.portAlloc != nil {
+		b.portAlloc.ClaimPorts(ports)
+		b.portAlloc.ClaimPorts(udpPorts)
+		if traefikHostsStr != "" {
+			specs := types.ParseTraefikHostSpecs("lazy-tcp-proxy.traefik-hosts", traefikHostsStr)
+			traefikHosts = b.portAlloc.AllocateForHosts(specs)
+		}
+		if traefikTCPHostsStr != "" {
+			specs := types.ParseTraefikHostSpecs("lazy-tcp-proxy.traefik-tcp-hosts", traefikTCPHostsStr)
+			traefikTCPHosts = b.portAlloc.AllocateForHosts(specs)
+		}
+	}
+
 	return types.TargetInfo{
 		ContainerID:     d.Namespace + "/" + d.Name,
 		ContainerName:   d.Name,
@@ -364,6 +385,8 @@ func (b *Backend) deploymentToTargetInfo(d appsv1.Deployment) (types.TargetInfo,
 		TLS:             https,
 		APIKey:          apiKey,
 		BasicAuth:       basicAuth,
+		TraefikHosts:    traefikHosts,
+		TraefikTCPHosts: traefikTCPHosts,
 		Availability:    availability,
 	}, nil
 }

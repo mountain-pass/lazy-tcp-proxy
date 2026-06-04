@@ -2,6 +2,7 @@ package portainer
 
 import (
 	"bytes"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -126,12 +127,43 @@ func TestUploadPack(t *testing.T) {
 	if !bytes.HasPrefix(body, []byte("0008NAK\n")) {
 		t.Errorf("expected NAK response, got prefix %q", body[:min(16, len(body))])
 	}
-	// followed by PACK magic
-	packStart := 8
-	if len(body) < packStart+4 || string(body[packStart:packStart+4]) != "PACK" {
-		t.Errorf("expected PACK after NAK, got %q", body[packStart:min(packStart+8, len(body))])
+	// no side-band-64k in request body → raw PACK immediately after NAK
+	after := body[8:]
+	if len(after) < 4 || string(after[:4]) != "PACK" {
+		t.Errorf("expected raw PACK after NAK, got %q", after[:min(16, len(after))])
 	}
 	_ = snap
+}
+
+func TestUploadPack_shallow(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.yml"), []byte("name: a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	snap := buildSnapshot(dir)
+	sha := fmt.Sprintf("%x", snap.commitSHA)
+
+	// Portainer sends: want + side-band-64k + shallow + deepen 1
+	reqBody := "0059want " + sha + " side-band-64k agent=go-git/5.x shallow\n000ddeepen 1\n00000009done\n"
+	req := httptest.NewRequest(http.MethodPost, "/portainer/git/git-upload-pack",
+		bytes.NewBufferString(reqBody))
+	w := httptest.NewRecorder()
+	GitHandler(dir).ServeHTTP(w, req)
+
+	body := w.Body.Bytes()
+	// must begin with "shallow <sha>\n" pkt-line, then flush, then NAK
+	shallowPkt := pktLine("shallow " + sha + "\n")
+	if !bytes.HasPrefix(body, shallowPkt) {
+		t.Errorf("expected shallow pkt-line prefix, got %q", body[:min(32, len(body))])
+	}
+	after := body[len(shallowPkt):]
+	if !bytes.HasPrefix(after, pktFlush) {
+		t.Errorf("expected flush after shallow, got %q", after[:min(8, len(after))])
+	}
+	after = after[len(pktFlush):]
+	if !bytes.HasPrefix(after, []byte("0008NAK\n")) {
+		t.Errorf("expected NAK after flush, got %q", after[:min(16, len(after))])
+	}
 }
 
 func TestGitClone(t *testing.T) {

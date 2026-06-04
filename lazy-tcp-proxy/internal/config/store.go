@@ -46,10 +46,15 @@ type ServiceEntry struct {
 
 // Store manages a YAML config file on disk and the in-memory config it represents.
 type Store struct {
-	mu     sync.RWMutex
-	path   string
-	config DynamicConfig
+	mu        sync.RWMutex
+	path      string
+	config    DynamicConfig
+	portAlloc *types.PortAllocator
 }
+
+// SetPortAllocator wires the dynamic port allocator used to assign listen ports
+// to traefik_hosts / traefik_tcp_hosts config entries.
+func (s *Store) SetPortAllocator(a *types.PortAllocator) { s.portAlloc = a }
 
 // New creates a Store for the given file path. Call Load() to read the file.
 func New(path string) *Store {
@@ -84,9 +89,9 @@ func (s *Store) Load() error {
 #    basic_auth:
 #      - "user:$2y$12$hashedpassword"   # htpasswd bcrypt hash (use: docker run --rm --entrypoint htpasswd httpd:2 -Bbn user password)
 #    traefik_hosts:
-#      - "myapp.localhost:9000"
+#      - "myapp.localhost:8080"    # domain:target_port — listen port is auto-assigned from LISTEN_START_PORT
 #    traefik_tcp_hosts:
-#      - "mongo.localhost:27015"
+#      - "mongo.localhost:27017"   # domain:target_port — listen port is auto-assigned from LISTEN_START_PORT
 `)
 		if werr := os.WriteFile(s.path, placeholder, 0o644); werr != nil {
 			log.Printf("config: could not create placeholder at %s: %v", s.path, werr)
@@ -179,7 +184,7 @@ func (s *Store) Apply(discovered []types.TargetInfo, defaultID func(string) stri
 	var errs []error
 
 	for _, entry := range cfg.Services {
-		info, err := entryToTargetInfo(entry)
+		info, err := entryToTargetInfo(entry, s.portAlloc)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("service %q: %w", entry.Name, err))
 			continue
@@ -204,7 +209,8 @@ func (s *Store) Apply(discovered []types.TargetInfo, defaultID func(string) stri
 }
 
 // entryToTargetInfo converts a ServiceEntry into a types.TargetInfo.
-func entryToTargetInfo(entry ServiceEntry) (types.TargetInfo, error) {
+// alloc may be nil (e.g. in tests); when nil, traefik host entries are omitted.
+func entryToTargetInfo(entry ServiceEntry, alloc *types.PortAllocator) (types.TargetInfo, error) {
 	info := types.TargetInfo{
 		ContainerName: entry.Name,
 	}
@@ -215,8 +221,20 @@ func entryToTargetInfo(entry ServiceEntry) (types.TargetInfo, error) {
 	if len(entry.UDPPorts) > 0 {
 		info.UDPPorts = types.ParsePortMappings("udp_ports", strings.Join(entry.UDPPorts, ","))
 	}
-	if len(info.Ports) == 0 && len(info.UDPPorts) == 0 {
-		return types.TargetInfo{}, fmt.Errorf("must specify at least one port in ports or udp_ports")
+	// traefik_hosts / traefik_tcp_hosts are parsed as specs here; allocation is
+	// performed below after explicit ports are claimed. Store them temporarily.
+	var traefikHostSpecs, traefikTCPHostSpecs []types.TraefikHostSpec
+	for _, h := range entry.TraefikHosts {
+		specs := types.ParseTraefikHostSpecs("traefik_hosts", h)
+		traefikHostSpecs = append(traefikHostSpecs, specs...)
+	}
+	for _, h := range entry.TraefikTCPHosts {
+		specs := types.ParseTraefikHostSpecs("traefik_tcp_hosts", h)
+		traefikTCPHostSpecs = append(traefikTCPHostSpecs, specs...)
+	}
+
+	if len(info.Ports) == 0 && len(info.UDPPorts) == 0 && len(traefikHostSpecs) == 0 && len(traefikTCPHostSpecs) == 0 {
+		return types.TargetInfo{}, fmt.Errorf("must specify at least one of ports, udp_ports, traefik_hosts, or traefik_tcp_hosts")
 	}
 
 	if len(entry.AllowList) > 0 {
@@ -249,9 +267,14 @@ func entryToTargetInfo(entry ServiceEntry) (types.TargetInfo, error) {
 	info.TLS = entry.TLS
 	info.APIKey = entry.APIKey
 	info.BasicAuth = entry.BasicAuth
-	info.TraefikHosts = entry.TraefikHosts
-	info.TraefikTCPHosts = entry.TraefikTCPHosts
 	info.Availability = types.ParseAvailabilityLabel(entry.Name, entry.Availability)
+
+	if alloc != nil {
+		alloc.ClaimPorts(info.Ports)
+		alloc.ClaimPorts(info.UDPPorts)
+		info.TraefikHosts = alloc.AllocateForHosts(traefikHostSpecs)
+		info.TraefikTCPHosts = alloc.AllocateForHosts(traefikTCPHostSpecs)
+	}
 
 	if entry.Scale != nil && *entry.Scale >= 1 {
 		info.DesiredReplicas = *entry.Scale
