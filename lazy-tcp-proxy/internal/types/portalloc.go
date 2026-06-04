@@ -47,30 +47,43 @@ func (a *PortAllocator) ClaimPorts(mappings []PortMapping) {
 	}
 }
 
-// AllocateForHosts resolves a slice of TraefikHostSpec into
-// "domain:listen_port" strings suitable for TargetInfo.TraefikHosts.
+// AllocatePortMappings resolves a slice of TraefikHostSpec into
+// "domain:listen_port" strings and corresponding PortMapping entries.
+// Append the returned mappings to TargetInfo.Ports so the proxy server
+// creates TCP listeners for dynamically assigned ports.
 //
 // Each unique domain receives one listen port. If a domain was previously
 // allocated it reuses the same port (stable across re-registrations).
 // Specs with an empty Domain are silently skipped.
-func (a *PortAllocator) AllocateForHosts(specs []TraefikHostSpec) []string {
+func (a *PortAllocator) AllocatePortMappings(specs []TraefikHostSpec) ([]string, []PortMapping) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	out := make([]string, 0, len(specs))
+	hosts := make([]string, 0, len(specs))
+	mappings := make([]PortMapping, 0, len(specs))
 	for _, spec := range specs {
 		if spec.Domain == "" {
 			continue
 		}
-		if p, ok := a.assigned[spec.Domain]; ok {
-			out = append(out, fmt.Sprintf("%s:%d", spec.Domain, p))
-			continue
+		var p int
+		if existing, ok := a.assigned[spec.Domain]; ok {
+			p = existing
+		} else {
+			p = a.nextFree()
+			a.assigned[spec.Domain] = p
+			a.claimed[p] = struct{}{}
 		}
-		p := a.nextFree()
-		a.assigned[spec.Domain] = p
-		a.claimed[p] = struct{}{}
-		out = append(out, fmt.Sprintf("%s:%d", spec.Domain, p))
+		hosts = append(hosts, fmt.Sprintf("%s:%d", spec.Domain, p))
+		mappings = append(mappings, PortMapping{ListenPort: p, TargetPort: spec.TargetPort})
 	}
-	return out
+	return hosts, mappings
+}
+
+// AllocateForHosts resolves a slice of TraefikHostSpec into
+// "domain:listen_port" strings suitable for TargetInfo.TraefikHosts.
+// Use AllocatePortMappings when you also need PortMapping entries for the proxy.
+func (a *PortAllocator) AllocateForHosts(specs []TraefikHostSpec) []string {
+	hosts, _ := a.AllocatePortMappings(specs)
+	return hosts
 }
 
 func (a *PortAllocator) nextFree() int {

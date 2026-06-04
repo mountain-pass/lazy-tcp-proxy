@@ -264,8 +264,11 @@ func (m *Manager) containerToTargetInfo(ctx context.Context, containerID string)
 	if m.portAlloc != nil {
 		m.portAlloc.ClaimPorts(ports)
 		m.portAlloc.ClaimPorts(udpPorts)
-		traefikHosts = m.portAlloc.AllocateForHosts(traefikHostSpecs)
-		traefikTCPHosts = m.portAlloc.AllocateForHosts(traefikTCPHostSpecs)
+		var traefikPorts, traefikTCPPorts []types.PortMapping
+		traefikHosts, traefikPorts = m.portAlloc.AllocatePortMappings(traefikHostSpecs)
+		traefikTCPHosts, traefikTCPPorts = m.portAlloc.AllocatePortMappings(traefikTCPHostSpecs)
+		ports = append(ports, traefikPorts...)
+		ports = append(ports, traefikTCPPorts...)
 	}
 
 	return types.TargetInfo{
@@ -830,8 +833,11 @@ func (m *Manager) serviceToTargetInfo(svc swarm.Service) (types.TargetInfo, erro
 	if m.portAlloc != nil {
 		m.portAlloc.ClaimPorts(ports)
 		m.portAlloc.ClaimPorts(udpPorts)
-		traefikHosts = m.portAlloc.AllocateForHosts(traefikHostSpecs)
-		traefikTCPHosts = m.portAlloc.AllocateForHosts(traefikTCPHostSpecs)
+		var traefikPorts, traefikTCPPorts []types.PortMapping
+		traefikHosts, traefikPorts = m.portAlloc.AllocatePortMappings(traefikHostSpecs)
+		traefikTCPHosts, traefikTCPPorts = m.portAlloc.AllocatePortMappings(traefikTCPHostSpecs)
+		ports = append(ports, traefikPorts...)
+		ports = append(ports, traefikTCPPorts...)
 	}
 
 	running := svc.ServiceStatus != nil && svc.ServiceStatus.RunningTasks > 0

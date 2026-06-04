@@ -272,8 +272,11 @@ func entryToTargetInfo(entry ServiceEntry, alloc *types.PortAllocator) (types.Ta
 	if alloc != nil {
 		alloc.ClaimPorts(info.Ports)
 		alloc.ClaimPorts(info.UDPPorts)
-		info.TraefikHosts = alloc.AllocateForHosts(traefikHostSpecs)
-		info.TraefikTCPHosts = alloc.AllocateForHosts(traefikTCPHostSpecs)
+		var traefikPorts, traefikTCPPorts []types.PortMapping
+		info.TraefikHosts, traefikPorts = alloc.AllocatePortMappings(traefikHostSpecs)
+		info.TraefikTCPHosts, traefikTCPPorts = alloc.AllocatePortMappings(traefikTCPHostSpecs)
+		info.Ports = append(info.Ports, traefikPorts...)
+		info.Ports = append(info.Ports, traefikTCPPorts...)
 	}
 
 	if entry.Scale != nil && *entry.Scale >= 1 {

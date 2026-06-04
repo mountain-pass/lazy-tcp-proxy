@@ -2,7 +2,7 @@
 
 **Requirement**: [2026-06-04-fix-metrics-dynamic-port-containers.md](2026-06-04-fix-metrics-dynamic-port-containers.md)
 **Date**: 2026-06-04
-**Status**: Approved
+**Status**: Implemented
 
 ## Implementation Steps
 

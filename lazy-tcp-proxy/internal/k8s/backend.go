@@ -357,14 +357,17 @@ func (b *Backend) deploymentToTargetInfo(d appsv1.Deployment) (types.TargetInfo,
 	if b.portAlloc != nil {
 		b.portAlloc.ClaimPorts(ports)
 		b.portAlloc.ClaimPorts(udpPorts)
+		var traefikPorts, traefikTCPPorts []types.PortMapping
 		if traefikHostsStr != "" {
 			specs := types.ParseTraefikHostSpecs("lazy-tcp-proxy.traefik-hosts", traefikHostsStr)
-			traefikHosts = b.portAlloc.AllocateForHosts(specs)
+			traefikHosts, traefikPorts = b.portAlloc.AllocatePortMappings(specs)
 		}
 		if traefikTCPHostsStr != "" {
 			specs := types.ParseTraefikHostSpecs("lazy-tcp-proxy.traefik-tcp-hosts", traefikTCPHostsStr)
-			traefikTCPHosts = b.portAlloc.AllocateForHosts(specs)
+			traefikTCPHosts, traefikTCPPorts = b.portAlloc.AllocatePortMappings(specs)
 		}
+		ports = append(ports, traefikPorts...)
+		ports = append(ports, traefikTCPPorts...)
 	}
 
 	return types.TargetInfo{
