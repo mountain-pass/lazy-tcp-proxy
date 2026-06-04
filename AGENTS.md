@@ -283,6 +283,7 @@ After Phase 3:
 10. Commit and push requirement and plan file changes promptly to reduce conflict windows
 11. Never merge feature branches into local `main` — always use the feature branch → push → PR workflow. Let GitHub merge into `main` via the PR.
 12. Before creating a PR, always run `golangci-lint run` from the `lazy-tcp-proxy/` directory and fix all issues. Do not open a PR with lint failures.
+13. Before creating a PR, always run `go test ./...` from the `lazy-tcp-proxy/` directory and fix all failures. Do not open a PR with test failures.
 
 ---
 
