@@ -26,6 +26,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/sync/singleflight"
 
 	"github.com/mountain-pass/lazy-tcp-proxy/internal/metrics"
@@ -1243,10 +1244,22 @@ func (s *ProxyServer) handleHTTPProxy(client, upstream net.Conn, ts *targetState
 			if strings.HasPrefix(authHeader, prefix) {
 				decoded, err := base64.StdEncoding.DecodeString(authHeader[len(prefix):])
 				if err == nil {
-					for _, cred := range ts.basicAuth {
-						if subtle.ConstantTimeCompare(decoded, []byte(cred)) == 1 {
-							ok = true
-							break
+					colonIdx := strings.IndexByte(string(decoded), ':')
+					if colonIdx >= 0 {
+						inUser := decoded[:colonIdx]
+						inPass := decoded[colonIdx+1:]
+						for _, cred := range ts.basicAuth {
+							sep := strings.IndexByte(cred, ':')
+							if sep < 0 {
+								continue
+							}
+							storedUser := []byte(cred[:sep])
+							storedHash := []byte(cred[sep+1:])
+							if subtle.ConstantTimeCompare(inUser, storedUser) == 1 &&
+								bcrypt.CompareHashAndPassword(storedHash, inPass) == nil {
+								ok = true
+								break
+							}
 						}
 					}
 				}

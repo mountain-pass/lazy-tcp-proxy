@@ -76,13 +76,17 @@ func (s *Store) Load() error {
 #    dependants: ["other-service"]
 #    cron_start: "0 9 * * 1-5"
 #    cron_stop:  "0 17 * * 1-5"
-#    http_healthcheck: "http://{{container}}:8080/health"
 #    availability: "ondemand"   # ondemand (default), cron, or manual
+#    http_healthcheck: "http://{{container}}:8080/health"
 #    tls: true
 #    api_key:
 #      - "your-secret-key"
 #    basic_auth:
-#      - "user:password"
+#      - "user:$2y$12$hashedpassword"   # htpasswd bcrypt hash (use: docker run --rm --entrypoint htpasswd httpd:2 -Bbn user password)
+#    traefik_hosts:
+#      - "myapp.localhost:9000"
+#    traefik_tcp_hosts:
+#      - "mongo.localhost:27015"
 `)
 		if werr := os.WriteFile(s.path, placeholder, 0o644); werr != nil {
 			log.Printf("config: could not create placeholder at %s: %v", s.path, werr)

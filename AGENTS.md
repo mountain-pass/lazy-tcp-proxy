@@ -281,6 +281,8 @@ After Phase 3:
 8. Document ALL changes as requirements, no matter how small. Even single-line fixes, minor UX tweaks, copy changes, and styling adjustments must be recorded. If code changed, a requirement must exist for it.
 9. Never deviate from the approved plan during Build without pausing to flag the discrepancy and get user input
 10. Commit and push requirement and plan file changes promptly to reduce conflict windows
+11. Never merge feature branches into local `main` — always use the feature branch → push → PR workflow. Let GitHub merge into `main` via the PR.
+12. Before creating a PR, always run `golangci-lint run` from the `lazy-tcp-proxy/` directory and fix all issues. Do not open a PR with lint failures.
 
 ---
 

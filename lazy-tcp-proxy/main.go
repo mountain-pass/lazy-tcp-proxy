@@ -19,6 +19,7 @@ import (
 	"github.com/mountain-pass/lazy-tcp-proxy/internal/admin"
 	"github.com/mountain-pass/lazy-tcp-proxy/internal/config"
 	"github.com/mountain-pass/lazy-tcp-proxy/internal/metrics"
+	portainerpkg "github.com/mountain-pass/lazy-tcp-proxy/internal/portainer"
 	"github.com/mountain-pass/lazy-tcp-proxy/internal/proxy"
 	"github.com/mountain-pass/lazy-tcp-proxy/internal/scheduler"
 	traefikpkg "github.com/mountain-pass/lazy-tcp-proxy/internal/traefik"
@@ -141,6 +142,19 @@ func resolveComposeDir(configPath string) string {
 	return filepath.Join(filepath.Dir(configPath), "compose")
 }
 
+func resolveRecipesDir(configPath string) string {
+	if v := os.Getenv("RECIPES_DIR"); v != "" {
+		return v
+	}
+	return filepath.Join(filepath.Dir(configPath), "recipes")
+}
+
+func ensureDir(path string) {
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		log.Printf("warning: could not create directory %q: %v", path, err)
+	}
+}
+
 func resolveTraefikProxyHost() string {
 	if v := os.Getenv("TRAEFIK_PROXY_HOST"); v != "" {
 		return v
@@ -160,6 +174,26 @@ func resolveTraefikCertResolver() string {
 		return v
 	}
 	return "myresolver"
+}
+
+func resolveTraefikTransportTimeouts() *traefikpkg.TransportTimeouts {
+	dial := os.Getenv("TRAEFIK_DIAL_TIMEOUT")
+	if dial == "" {
+		dial = "30s"
+	}
+	rht := os.Getenv("TRAEFIK_RESPONSE_HEADER_TIMEOUT")
+	if rht == "" {
+		rht = "15m"
+	}
+	idle := os.Getenv("TRAEFIK_IDLE_CONN_TIMEOUT")
+	if idle == "" {
+		idle = "90s"
+	}
+	return &traefikpkg.TransportTimeouts{
+		DialTimeout:           dial,
+		ResponseHeaderTimeout: rht,
+		IdleConnTimeout:       idle,
+	}
 }
 
 const statusDashboardHTML = `<!DOCTYPE html>
@@ -322,7 +356,7 @@ const statusDashboardHTML = `<!DOCTYPE html>
 </body>
 </html>`
 
-func runStatusServer(ctx context.Context, srv *proxy.ProxyServer, port int, traefikProxyHost, traefikEntryPoint, traefikCertResolver, webHost string, webPort int) {
+func runStatusServer(ctx context.Context, srv *proxy.ProxyServer, port int, traefikProxyHost, traefikEntryPoint, traefikCertResolver, webHost string, webPort int, traefikTimeouts *traefikpkg.TransportTimeouts, recipesDir string) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
 		var ms runtime.MemStats
@@ -347,8 +381,10 @@ func runStatusServer(ctx context.Context, srv *proxy.ProxyServer, port int, trae
 			}
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(traefikpkg.BuildConfig(snaps, traefikProxyHost, traefikEntryPoint, traefikCertResolver, webHost, webPort)) //nolint:errcheck
+		json.NewEncoder(w).Encode(traefikpkg.BuildConfig(snaps, traefikProxyHost, traefikEntryPoint, traefikCertResolver, webHost, webPort, traefikTimeouts)) //nolint:errcheck
 	})
+	mux.HandleFunc("/portainer/templates", portainerpkg.TemplatesHandler(recipesDir))
+	mux.Handle("/portainer/git/", portainerpkg.GitHandler(recipesDir))
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprint(w, "ok") //nolint:errcheck
@@ -512,17 +548,6 @@ func main() {
 	}
 	srv := proxy.NewServer(ctx, mgr, startTime, idleTimeout, tick, startTimeout, tlsConfig)
 
-	// Initialise metrics collector (optional — only when METRICS_POSTGRES_URL is set)
-	if pgURL := resolveMetricsPostgresURL(); pgURL != "" {
-		collector, err := metrics.New(ctx, pgURL)
-		if err != nil {
-			log.Printf("metrics: failed to connect to PostgreSQL (%v); metrics disabled", err)
-		} else {
-			srv.SetCollector(collector)
-			go collector.Run(ctx)
-		}
-	}
-
 	// Create and wire the cron scheduler (must happen before Discover so that
 	// initial targets get their schedules registered).
 	sched := scheduler.New(ctx, srv)
@@ -530,12 +555,20 @@ func main() {
 	sched.Start()
 	defer sched.Stop()
 
+	// Resolve config and directory paths up front so both the web server and
+	// compose re-provisioning use consistent absolute paths.
+	configPath := resolveConfigPath()
+	recipesDir := resolveRecipesDir(configPath)
+	ensureDir(recipesDir)
+	log.Printf("portainer: GET /portainer/templates and git clone /portainer/git available (RECIPES_DIR=%s)", recipesDir)
+
 	// Start the HTTP status server
 	webPort := resolveWebPort()
 	webHost := resolveWebHost()
 	traefikProxyHost := resolveTraefikProxyHost()
 	traefikEntryPoint := resolveTraefikEntryPoint()
 	traefikCertResolver := resolveTraefikCertResolver()
+	traefikTimeouts := resolveTraefikTransportTimeouts()
 	if webPort == 0 {
 		log.Println("web server: disabled (WEB_PORT=0)")
 	} else {
@@ -544,14 +577,15 @@ func main() {
 		} else {
 			log.Printf("web server: listening on :%d (WEB_HOST not set — no Traefik route for web endpoint)", webPort)
 		}
-		log.Printf("traefik provider: GET /traefik available (TRAEFIK_PROXY_HOST=%s, TRAEFIK_ENTRYPOINT=%q, TRAEFIK_CERTRESOLVER=%q)",
-			traefikProxyHost, traefikEntryPoint, traefikCertResolver)
-		runStatusServer(ctx, srv, webPort, traefikProxyHost, traefikEntryPoint, traefikCertResolver, webHost, webPort)
+		log.Printf("traefik provider: GET /traefik available (TRAEFIK_PROXY_HOST=%s, TRAEFIK_ENTRYPOINT=%q, TRAEFIK_CERTRESOLVER=%q, TRAEFIK_DIAL_TIMEOUT=%s, TRAEFIK_RESPONSE_HEADER_TIMEOUT=%s, TRAEFIK_IDLE_CONN_TIMEOUT=%s)",
+			traefikProxyHost, traefikEntryPoint, traefikCertResolver,
+			traefikTimeouts.DialTimeout, traefikTimeouts.ResponseHeaderTimeout, traefikTimeouts.IdleConnTimeout)
+		runStatusServer(ctx, srv, webPort, traefikProxyHost, traefikEntryPoint, traefikCertResolver, webHost, webPort, traefikTimeouts, recipesDir)
 	}
 
 	// Load dynamic config file
-	configPath := resolveConfigPath()
 	composeDir := resolveComposeDir(configPath)
+	ensureDir(composeDir)
 	mgr.SetComposeDir(composeDir)
 	srv.SetComposeDir(composeDir)
 	log.Printf("compose dir: %s (set COMPOSE_DIR to override)", composeDir)
@@ -581,6 +615,20 @@ func main() {
 	log.Println("performing initial target discovery...")
 	if err := discoverAndApply(ctx, mgr, store, srv); err != nil {
 		log.Printf("initial discovery error: %v", err)
+	}
+
+	// Initialise metrics collector after network join and target registration,
+	// so a locally hosted PostgreSQL container is reachable via its Docker network.
+	if pgURL := resolveMetricsPostgresURL(); pgURL != "" {
+		log.Printf("metrics: connecting to PostgreSQL...")
+		collector, err := metrics.New(ctx, pgURL)
+		if err != nil {
+			log.Printf("metrics: failed to connect to PostgreSQL (%v); metrics disabled", err)
+		} else {
+			log.Printf("metrics: connected to PostgreSQL successfully")
+			srv.SetCollector(collector)
+			go collector.Run(ctx)
+		}
 	}
 
 	// Watch for runtime changes (WatchEvents/WatchServiceEvents call RegisterTarget
