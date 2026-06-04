@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 // AppTemplates is the top-level Portainer App Templates v3 response.
@@ -18,10 +20,35 @@ type AppTemplates struct {
 
 // Template is a single Portainer App Template entry (type 3 = Docker Compose stack).
 type Template struct {
-	Type       int        `json:"type"`
-	Title      string     `json:"title"`
-	Repository Repository `json:"repository"`
-	Env        []EnvVar   `json:"env"`
+	Type              int        `json:"type"`
+	Title             string     `json:"title"`
+	Description       string     `json:"description,omitempty"`
+	AdministratorOnly bool       `json:"administrator_only,omitempty"`
+	Logo              string     `json:"logo,omitempty"`
+	Categories        []string   `json:"categories,omitempty"`
+	Note              string     `json:"note,omitempty"`
+	Repository        Repository `json:"repository"`
+	Env               []EnvVar   `json:"env"`
+}
+
+// xPortainerMeta holds the optional x-portainer override block from a recipe file.
+type xPortainerMeta struct {
+	Title             string   `yaml:"title"`
+	Description       string   `yaml:"description"`
+	AdministratorOnly bool     `yaml:"administrator-only"`
+	Logo              string   `yaml:"logo"`
+	Categories        []string `yaml:"categories"`
+	Note              string   `yaml:"note"`
+}
+
+// parseXPortainer extracts the x-portainer section from raw YAML content.
+// Returns a zero-value struct if the section is absent or the YAML is malformed.
+func parseXPortainer(content string) xPortainerMeta {
+	var doc struct {
+		XPortainer xPortainerMeta `yaml:"x-portainer"`
+	}
+	_ = yaml.Unmarshal([]byte(content), &doc)
+	return doc.XPortainer
 }
 
 // Repository points Portainer at the git endpoint and stackfile path.
@@ -78,9 +105,18 @@ func BuildTemplates(recipesDir, baseURL string) AppTemplates {
 		}
 		filename := filepath.Base(path)
 		title := strings.TrimSuffix(filename, ".yml")
+		meta := parseXPortainer(string(data))
+		if meta.Title != "" {
+			title = meta.Title
+		}
 		out.Templates = append(out.Templates, Template{
-			Type:  3,
-			Title: title,
+			Type:              3,
+			Title:             title,
+			Description:       meta.Description,
+			AdministratorOnly: meta.AdministratorOnly,
+			Logo:              meta.Logo,
+			Categories:        meta.Categories,
+			Note:              meta.Note,
 			Repository: Repository{
 				URL:       baseURL + "/portainer/git",
 				StackFile: filename,
