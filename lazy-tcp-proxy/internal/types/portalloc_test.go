@@ -75,3 +75,61 @@ func TestPortAllocator_MixedEmptyAndValid(t *testing.T) {
 		t.Errorf("got %v, want [real.com:8000]", got)
 	}
 }
+
+func TestAllocatePortMappings_SingleSpec(t *testing.T) {
+	a := NewPortAllocator(8000)
+	hosts, mappings := a.AllocatePortMappings([]TraefikHostSpec{{Domain: "a.com", TargetPort: 80}})
+	if len(hosts) != 1 || hosts[0] != "a.com:8000" {
+		t.Errorf("hosts: got %v, want [a.com:8000]", hosts)
+	}
+	if len(mappings) != 1 || mappings[0].ListenPort != 8000 || mappings[0].TargetPort != 80 {
+		t.Errorf("mappings: got %v, want [{8000 80}]", mappings)
+	}
+}
+
+func TestAllocatePortMappings_MultipleSpecsDifferentTargetPorts(t *testing.T) {
+	a := NewPortAllocator(8000)
+	hosts, mappings := a.AllocatePortMappings([]TraefikHostSpec{
+		{Domain: "a.com", TargetPort: 80},
+		{Domain: "b.com", TargetPort: 443},
+	})
+	if len(hosts) != 2 || hosts[0] != "a.com:8000" || hosts[1] != "b.com:8001" {
+		t.Errorf("hosts: got %v", hosts)
+	}
+	if len(mappings) != 2 {
+		t.Fatalf("mappings: expected 2, got %d", len(mappings))
+	}
+	if mappings[0] != (PortMapping{ListenPort: 8000, TargetPort: 80}) {
+		t.Errorf("mappings[0]: got %v, want {8000 80}", mappings[0])
+	}
+	if mappings[1] != (PortMapping{ListenPort: 8001, TargetPort: 443}) {
+		t.Errorf("mappings[1]: got %v, want {8001 443}", mappings[1])
+	}
+}
+
+func TestAllocatePortMappings_SkipsClaimedPort(t *testing.T) {
+	a := NewPortAllocator(8000)
+	a.ClaimPorts([]PortMapping{{ListenPort: 8000, TargetPort: 9999}})
+	_, mappings := a.AllocatePortMappings([]TraefikHostSpec{{Domain: "a.com", TargetPort: 80}})
+	if len(mappings) != 1 || mappings[0].ListenPort != 8001 {
+		t.Errorf("expected listen port 8001, got %v", mappings)
+	}
+}
+
+func TestAllocatePortMappings_StableReallocation(t *testing.T) {
+	a := NewPortAllocator(8000)
+	specs := []TraefikHostSpec{{Domain: "a.com", TargetPort: 80}}
+	_, first := a.AllocatePortMappings(specs)
+	_, second := a.AllocatePortMappings(specs)
+	if len(first) != 1 || len(second) != 1 || first[0] != second[0] {
+		t.Errorf("expected stable mapping: first=%v second=%v", first, second)
+	}
+}
+
+func TestAllocatePortMappings_EmptyDomainSkipped(t *testing.T) {
+	a := NewPortAllocator(8000)
+	hosts, mappings := a.AllocatePortMappings([]TraefikHostSpec{{Domain: "", TargetPort: 80}})
+	if len(hosts) != 0 || len(mappings) != 0 {
+		t.Errorf("expected empty results for blank domain, got hosts=%v mappings=%v", hosts, mappings)
+	}
+}
