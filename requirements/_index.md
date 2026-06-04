@@ -99,3 +99,4 @@
 | REQ-095 | Rename /status to /metrics and Add Memory Fields                         | Medium | Completed     | 2026-05-29 | [2026-05-29-rename-status-to-metrics.md](2026-05-29-rename-status-to-metrics.md) |
 | REQ-096 | Basic Auth: Replace Cleartext Passwords with htpasswd Bcrypt Hashes      | High   | Completed     | 2026-05-30 | [2026-05-30-basic-auth-htpasswd-bcrypt.md](2026-05-30-basic-auth-htpasswd-bcrypt.md) |
 | REQ-097 | Portainer App Templates Endpoint (`/portainer`)                          | Medium | In Progress   | 2026-06-04 | [2026-06-04-portainer-app-templates-endpoint.md](2026-06-04-portainer-app-templates-endpoint.md) |
+| REQ-098 | Ensure RECIPES_DIR and COMPOSE_DIR Exist on Startup                      | Low    | Planned       | 2026-06-04 | [2026-06-04-ensure-dirs-on-startup.md](2026-06-04-ensure-dirs-on-startup.md) |
