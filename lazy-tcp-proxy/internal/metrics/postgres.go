@@ -91,30 +91,81 @@ func (db *postgresDB) close() {
 }
 
 const queryHourlyActivity = `
-SELECT container_name, port, is_udp, date_trunc('hour', rollup_at) AS hour
+SELECT container_name, port, is_udp,
+       EXTRACT(DOW  FROM rollup_at)::int AS dow,
+       EXTRACT(HOUR FROM rollup_at)::int AS hr
 FROM proxy_metrics
 WHERE rollup_at >= NOW() - INTERVAL '7 days'
   AND uptime_ms_total > 0
-GROUP BY container_name, port, is_udp, date_trunc('hour', rollup_at)
-ORDER BY container_name, port, is_udp, hour
+GROUP BY container_name, port, is_udp, dow, hr
+ORDER BY container_name, port, is_udp, dow, hr
 `
 
-func (db *postgresDB) hourlyActivity(ctx context.Context) ([]HourlyActivityRow, error) {
+type serviceKey struct {
+	containerName string
+	port          int
+	isUDP         bool
+}
+
+// hourlyActivity returns one ServiceActivity per (container_name, port, is_udp) tuple.
+// DOW values: 0=Sunday, 1=Monday, 2=Tuesday, 3=Wednesday, 4=Thursday, 5=Friday, 6=Saturday.
+func (db *postgresDB) hourlyActivity(ctx context.Context) ([]ServiceActivity, error) {
 	rows, err := db.pool.Query(ctx, queryHourlyActivity)
 	if err != nil {
 		return nil, fmt.Errorf("hourlyActivity query: %w", err)
 	}
 	defer rows.Close()
-	var out []HourlyActivityRow
+
+	index := make(map[serviceKey]*ServiceActivity)
+	var order []serviceKey
+
 	for rows.Next() {
-		var r HourlyActivityRow
-		if err := rows.Scan(&r.ContainerName, &r.Port, &r.IsUDP, &r.Hour); err != nil {
+		var (
+			name  string
+			port  int
+			isUDP bool
+			dow   int
+			hr    int
+		)
+		if err := rows.Scan(&name, &port, &isUDP, &dow, &hr); err != nil {
 			return nil, fmt.Errorf("hourlyActivity scan: %w", err)
 		}
-		r.Active = true
-		out = append(out, r)
+		k := serviceKey{name, port, isUDP}
+		sa, ok := index[k]
+		if !ok {
+			sa = &ServiceActivity{ContainerName: name, Port: port, IsUDP: isUDP}
+			index[k] = sa
+			order = append(order, k)
+		}
+		if hr >= 0 && hr < 24 {
+			switch dow {
+			case 0:
+				sa.Sun[hr] = 1
+			case 1:
+				sa.Mon[hr] = 1
+			case 2:
+				sa.Tue[hr] = 1
+			case 3:
+				sa.Wed[hr] = 1
+			case 4:
+				sa.Thu[hr] = 1
+			case 5:
+				sa.Fri[hr] = 1
+			case 6:
+				sa.Sat[hr] = 1
+			}
+			sa.Active = true
+		}
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	out := make([]ServiceActivity, 0, len(order))
+	for _, k := range order {
+		out = append(out, *index[k])
+	}
+	return out, nil
 }
 
 // retryBuffer holds up to 5 failed snapshots, oldest first.
