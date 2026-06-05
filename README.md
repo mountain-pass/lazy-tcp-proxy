@@ -105,6 +105,7 @@ Configure via environment variables:
 | `COMPOSE_DIR`         | Directory scanned for compose files and image archives when re-provisioning a missing container (see [Compose Re-provisioning](#compose-re-provisioning)) | `<dir of CONFIG_PATH>/compose` |
 | `RECIPES_DIR`         | Directory of Docker Compose recipe files served by `GET /portainer` (see [Portainer App Templates](#portainer-app-templates)) | `<dir of CONFIG_PATH>/recipes` |
 | `METRICS_POSTGRES_URL` | PostgreSQL connection URL for metrics storage (see [PostgreSQL Metrics](#postgresql-metrics)). When set, per-port stats are accumulated and flushed to a `proxy_metrics` table every minute. When absent, metrics storage is disabled and no PostgreSQL connection is made | *(none — disabled)* |
+| `CORS_ALLOW_ORIGINS`  | When set, adds `Access-Control-Allow-Origin`, `Access-Control-Allow-Methods`, and `Access-Control-Allow-Headers` headers to every response from the web server, and answers `OPTIONS` pre-flight requests with `204`. Use `*` to allow all origins, or supply a specific origin such as `https://my-dashboard.example.com`. When unset no CORS headers are added | *(none — disabled)* |
 
 All are optional; defaults are safe for most setups.
 
