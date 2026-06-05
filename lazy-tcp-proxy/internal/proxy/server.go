@@ -226,12 +226,19 @@ func (s *ProxyServer) SetScheduler(sched cronScheduler) {
 func (s *ProxyServer) SetCollector(c *metrics.Collector) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	now := time.Now()
 	s.collector = c
 	for _, ts := range s.targets {
 		c.RegisterPort(ts.listenPort, ts.info.ContainerName, false, types.EffectiveAvailability(ts.info))
+		if ts.running {
+			c.OnContainerRunning(ts.listenPort, false, now)
+		}
 	}
 	for _, uls := range s.udpTargets {
 		c.RegisterPort(uls.listenPort, uls.info.ContainerName, true, types.EffectiveAvailability(uls.info))
+		if uls.running {
+			c.OnContainerRunning(uls.listenPort, true, now)
+		}
 	}
 }
 
@@ -1106,6 +1113,7 @@ func (s *ProxyServer) handleConn(conn net.Conn, ts *targetState) {
 			}
 			return
 		}
+		now := time.Now()
 		if !shared && s.collector != nil {
 			s.collector.RecordColdStart(ts.listenPort, false, time.Since(coldStart).Milliseconds())
 		}
@@ -1113,11 +1121,17 @@ func (s *ProxyServer) handleConn(conn net.Conn, ts *targetState) {
 		for _, t := range s.targets {
 			if t.info.ContainerID == ts.info.ContainerID {
 				t.running = true
+				if s.collector != nil {
+					s.collector.OnContainerRunning(t.listenPort, false, now)
+				}
 			}
 		}
 		for _, u := range s.udpTargets {
 			if u.info.ContainerID == ts.info.ContainerID {
 				u.running = true
+				if s.collector != nil {
+					s.collector.OnContainerRunning(u.listenPort, true, now)
+				}
 			}
 		}
 		s.mu.Unlock()
