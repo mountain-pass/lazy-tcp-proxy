@@ -99,7 +99,7 @@
   <div class="flex gap-1 mb-6 border-b border-[#3B3837]">
     {#each [['status','Status'],['metrics','Metrics']] as [id, label]}
       <button onclick={() => switchTab(id)}
-        class="px-4 py-1.5 text-sm font-medium transition-colors {activeTab === id ? 'text-[#FAFAF9] border-b-2 border-[#D97757] -mb-px' : 'text-[#78716C] hover:text-[#A8A29E]'}">
+        class="px-4 py-1.5 text-sm font-medium cursor-pointer transition-colors {activeTab === id ? 'text-[#FAFAF9] border-b-2 border-[#D97757] -mb-px' : 'text-[#78716C] hover:text-[#A8A29E]'}">
         {label}
       </button>
     {/each}
