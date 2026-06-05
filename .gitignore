@@ -2,3 +2,5 @@ recipes/postgres/ssl_certs/
 example/docker/lazy-tcp-proxy/
 .tmp-*
 *.tar
+lazy-tcp-proxy/html/dist/
+lazy-tcp-proxy/html/node_modules/
