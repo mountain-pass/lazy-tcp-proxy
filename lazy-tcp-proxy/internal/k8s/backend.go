@@ -420,7 +420,7 @@ func (b *Backend) storeServiceName(tid string, ann map[string]string) {
 }
 
 
-// MemoryStats is a no-op on Kubernetes; Docker-level memory info is unavailable.
-func (b *Backend) MemoryStats(_ context.Context) (used, total int64, err error) {
-	return 0, 0, nil
+// ContainerMemoryStats is a no-op on Kubernetes; Docker-level memory info is unavailable.
+func (b *Backend) ContainerMemoryStats(_ context.Context) (used, total int64, containers []types.ContainerMemoryStat, err error) {
+	return 0, 0, nil, nil
 }

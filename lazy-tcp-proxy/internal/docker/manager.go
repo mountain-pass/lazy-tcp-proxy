@@ -1151,29 +1151,29 @@ func (m *Manager) WatchEvents(ctx context.Context, handler types.TargetHandler) 
 	}
 }
 
-// MemoryStats returns the total memory used by all running containers and the
-// host's total available memory, both in bytes. Uses a 3-second timeout.
-// Returns (0, 0, err) on failure so callers can treat both values as nullable.
-func (m *Manager) MemoryStats(ctx context.Context) (used, total int64, err error) {
+// ContainerMemoryStats returns the aggregate memory used by all running
+// containers, the host's total available memory, and a per-container
+// breakdown, all in bytes. Uses a 3-second timeout.
+func (m *Manager) ContainerMemoryStats(ctx context.Context) (used, total int64, perContainer []types.ContainerMemoryStat, err error) {
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 
 	infoResult, err := m.cli.Info(ctx, client.InfoOptions{})
 	if err != nil {
-		return 0, 0, fmt.Errorf("docker info: %w", err)
+		return 0, 0, nil, fmt.Errorf("docker info: %w", err)
 	}
 	total = infoResult.Info.MemTotal
 
 	containers, err := m.cli.ContainerList(ctx, client.ContainerListOptions{})
 	if err != nil {
-		return 0, total, fmt.Errorf("container list: %w", err)
+		return 0, total, nil, fmt.Errorf("container list: %w", err)
 	}
 
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	for _, c := range containers.Items {
 		wg.Add(1)
-		go func(id string) {
+		go func(id string, names []string) {
 			defer wg.Done()
 			result, statErr := m.cli.ContainerStats(ctx, id, client.ContainerStatsOptions{Stream: false})
 			if statErr != nil {
@@ -1190,11 +1190,16 @@ func (m *Manager) MemoryStats(ctx context.Context) (used, total int64, err error
 					memUsage -= cache
 				}
 			}
+			name := id
+			if len(names) > 0 {
+				name = strings.TrimPrefix(names[0], "/")
+			}
 			mu.Lock()
-			used += int64(memUsage) //nolint:gosec
+			used += int64(memUsage)                                                                                         //nolint:gosec
+			perContainer = append(perContainer, types.ContainerMemoryStat{Name: name, MemoryUsed: int64(memUsage), MemoryLimit: int64(s.MemoryStats.Limit)}) //nolint:gosec
 			mu.Unlock()
-		}(c.ID)
+		}(c.ID, c.Names)
 	}
 	wg.Wait()
-	return used, total, nil
+	return used, total, perContainer, nil
 }
