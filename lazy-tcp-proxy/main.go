@@ -270,7 +270,7 @@ func runStatusServer(ctx context.Context, srv *proxy.ProxyServer, mgr backendMan
 			return
 		}
 		if rows == nil {
-			rows = []metrics.HourlyActivityRow{}
+			rows = []metrics.ServiceActivity{}
 		}
 		w.Header().Set("Content-Type", "application/json")
 		enc := json.NewEncoder(w)

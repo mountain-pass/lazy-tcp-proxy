@@ -8,13 +8,23 @@ import (
 	"time"
 )
 
-// HourlyActivityRow represents one active hour for a (container_name, port, is_udp) tuple.
-type HourlyActivityRow struct {
-	ContainerName string    `json:"container_name"`
-	Port          int       `json:"port"`
-	IsUDP         bool      `json:"is_udp"`
-	Hour          time.Time `json:"hour"`
-	Active        bool      `json:"active"`
+// ServiceActivity holds the weekly usage heatmap for one (container_name, port, is_udp) tuple.
+// Each day field is a 24-element array indexed by hour-of-day (0–23).
+// A value of 1 means at least one proxy_metrics row in the last 7 days for that
+// weekday+hour had uptime_ms_total > 0; 0 means no activity.
+// Active is true if any cell across all seven days is 1.
+type ServiceActivity struct {
+	ContainerName string   `json:"container_name"`
+	Port          int      `json:"port"`
+	IsUDP         bool     `json:"is_udp"`
+	Mon           [24]int8 `json:"mon"`
+	Tue           [24]int8 `json:"tue"`
+	Wed           [24]int8 `json:"wed"`
+	Thu           [24]int8 `json:"thu"`
+	Fri           [24]int8 `json:"fri"`
+	Sat           [24]int8 `json:"sat"`
+	Sun           [24]int8 `json:"sun"`
+	Active        bool     `json:"active"`
 }
 
 // Snapshot is one minute of data for a single port, written as a row in proxy_metrics.
@@ -262,9 +272,9 @@ func (c *Collector) ContainerStopped(port int, isUDP bool) {
 	a.mu.Unlock()
 }
 
-// HourlyActivity queries the last 7 days of metrics and returns one row per
-// (container_name, port, is_udp, hour) bucket where uptime_ms_total > 0.
-func (c *Collector) HourlyActivity(ctx context.Context) ([]HourlyActivityRow, error) {
+// HourlyActivity queries the last 7 days of metrics and returns one entry per
+// (container_name, port, is_udp) with pre-aggregated day-of-week hour arrays.
+func (c *Collector) HourlyActivity(ctx context.Context) ([]ServiceActivity, error) {
 	return c.db.hourlyActivity(ctx)
 }
 
