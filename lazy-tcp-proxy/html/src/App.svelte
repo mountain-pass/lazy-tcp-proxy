@@ -40,7 +40,7 @@
 
   async function refresh() {
     try {
-      const url = import.meta.env.PROD ? '/metrics' : 'http://localhost:8080/metrics'
+      const url = import.meta.env.PROD ? '/status' : 'http://localhost:8080/status'
       const res = await fetch(url)
       if (!res.ok) throw new Error('HTTP ' + res.status)
       const data = await res.json()
