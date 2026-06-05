@@ -66,7 +66,7 @@
 
   // Shift UTC 7×24 activity matrix into local browser time.
   // getTimezoneOffset() returns minutes-west (negative for east), so negate it.
-  const LOCAL_OFFSET_HOURS = Math.round(-new Date().getTimezoneOffset() / 60)
+  const LOCAL_OFFSET_HOURS = Math.round(new Date().getTimezoneOffset() / 60)
 
   function shiftToLocalTime(svc) {
     if (LOCAL_OFFSET_HOURS === 0) return svc
@@ -191,15 +191,19 @@
     {#if metricsFetched && metricsData.length === 0}
       <p class="italic text-[#57534E] text-sm">No metrics data.</p>
     {/if}
-    <div class="text-xs text-[#57534E] mb-4">
-      Times shown in local time ({Intl.DateTimeFormat().resolvedOptions().timeZone})
+    <div class="mb-4">
+
+      <div class="mb-4">
+        <span class="text-xs text-[#78716C]">Times shown in local time ({Intl.DateTimeFormat().resolvedOptions().timeZone})</span>
+      </div>
+      
     </div>
     <div class="flex flex-col gap-8">
       {#each metricsData as svc}
         {@const udp = svc.is_udp ? '/udp' : ''}
         {@const local = shiftToLocalTime(svc)}
         <div class="{svc.active ? '' : 'opacity-40'}">
-          <div class="text-xs font-mono text-[#A8A29E] mb-2">{svc.container_name}:{svc.port}{udp}</div>
+          <div class="text-sm font-mono text-[#A8A29E] mb-2">{svc.container_name}:{svc.port}{udp}</div>
           <div class="flex flex-col gap-[3px]">
             {#each DAYS as day, di}
               <div class="flex items-center gap-[3px]">
