@@ -64,6 +64,23 @@
   const HOURS = Array.from({length: 24}, (_, i) => i)
   const HOUR_TICKS = new Set([0, 6, 12, 18, 23])
 
+  // Shift UTC 7×24 activity matrix into local browser time.
+  // getTimezoneOffset() returns minutes-west (negative for east), so negate it.
+  const LOCAL_OFFSET_HOURS = Math.round(-new Date().getTimezoneOffset() / 60)
+
+  function shiftToLocalTime(svc) {
+    if (LOCAL_OFFSET_HOURS === 0) return svc
+    // Flatten Mon–Sun into a 168-element array (index 0 = Mon 00:00 UTC)
+    const flat = DAYS.flatMap(d => Array.from(svc[d]))
+    const len = flat.length
+    // Rotate: positive offset shifts data left (UTC+N means local hours are ahead)
+    const shifted = flat.map((_, i) => flat[(i + LOCAL_OFFSET_HOURS + len) % len])
+    // Re-fold into day arrays
+    const result = {}
+    DAYS.forEach((d, di) => { result[d] = shifted.slice(di * 24, di * 24 + 24) })
+    return { ...svc, ...result }
+  }
+
   async function fetchMetrics() {
     try {
       const url = import.meta.env.PROD ? '/metrics' : 'https://dash.cname1.mountainpass.com.au/metrics'
@@ -174,9 +191,13 @@
     {#if metricsFetched && metricsData.length === 0}
       <p class="italic text-[#57534E] text-sm">No metrics data.</p>
     {/if}
+    <div class="text-xs text-[#57534E] mb-4">
+      Times shown in local time ({Intl.DateTimeFormat().resolvedOptions().timeZone})
+    </div>
     <div class="flex flex-col gap-8">
       {#each metricsData as svc}
         {@const udp = svc.is_udp ? '/udp' : ''}
+        {@const local = shiftToLocalTime(svc)}
         <div class="{svc.active ? '' : 'opacity-40'}">
           <div class="text-xs font-mono text-[#A8A29E] mb-2">{svc.container_name}:{svc.port}{udp}</div>
           <div class="flex flex-col gap-[3px]">
@@ -184,7 +205,7 @@
               <div class="flex items-center gap-[3px]">
                 <span class="w-8 text-[0.65rem] text-[#57534E] text-right pr-1">{DAY_LABELS[di]}</span>
                 {#each HOURS as h}
-                  <div class="w-3.5 h-3.5 rounded-sm {svc[day][h] ? 'bg-[#D97757]' : 'bg-[#292524]'}" title="{DAY_LABELS[di]} {h}:00"></div>
+                  <div class="w-3.5 h-3.5 rounded-sm {local[day][h] ? 'bg-[#D97757]' : 'bg-[#292524]'}" title="{DAY_LABELS[di]} {h}:00"></div>
                 {/each}
               </div>
             {/each}
