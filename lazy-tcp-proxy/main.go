@@ -371,7 +371,24 @@ const statusDashboardHTML = `<!DOCTYPE html>
 </body>
 </html>`
 
-func runStatusServer(ctx context.Context, srv *proxy.ProxyServer, port int, traefikProxyHost, traefikEntryPoint, traefikCertResolver, webHost string, webPort int, traefikTimeouts *traefikpkg.TransportTimeouts, recipesDir string) {
+func resolveCORSAllowOrigins() string {
+	return os.Getenv("CORS_ALLOW_ORIGINS")
+}
+
+func corsMiddleware(origins string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", origins)
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-API-Key, Authorization")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func runStatusServer(ctx context.Context, srv *proxy.ProxyServer, port int, traefikProxyHost, traefikEntryPoint, traefikCertResolver, webHost string, webPort int, traefikTimeouts *traefikpkg.TransportTimeouts, recipesDir, corsOrigins string) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
 		var ms runtime.MemStats
@@ -413,7 +430,11 @@ func runStatusServer(ctx context.Context, srv *proxy.ProxyServer, port int, trae
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		fmt.Fprint(w, statusDashboardHTML) //nolint:errcheck
 	})
-	hs := &http.Server{Addr: fmt.Sprintf(":%d", port), Handler: mux}
+	var handler http.Handler = mux
+	if corsOrigins != "" {
+		handler = corsMiddleware(corsOrigins, mux)
+	}
+	hs := &http.Server{Addr: fmt.Sprintf(":%d", port), Handler: handler}
 	context.AfterFunc(ctx, func() {
 		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -599,7 +620,7 @@ func main() {
 		log.Printf("traefik provider: GET /traefik available (TRAEFIK_PROXY_HOST=%s, TRAEFIK_ENTRYPOINT=%q, TRAEFIK_CERTRESOLVER=%q, TRAEFIK_DIAL_TIMEOUT=%s, TRAEFIK_RESPONSE_HEADER_TIMEOUT=%s, TRAEFIK_IDLE_CONN_TIMEOUT=%s)",
 			traefikProxyHost, traefikEntryPoint, traefikCertResolver,
 			traefikTimeouts.DialTimeout, traefikTimeouts.ResponseHeaderTimeout, traefikTimeouts.IdleConnTimeout)
-		runStatusServer(ctx, srv, webPort, traefikProxyHost, traefikEntryPoint, traefikCertResolver, webHost, webPort, traefikTimeouts, recipesDir)
+		runStatusServer(ctx, srv, webPort, traefikProxyHost, traefikEntryPoint, traefikCertResolver, webHost, webPort, traefikTimeouts, recipesDir, resolveCORSAllowOrigins())
 	}
 
 	// Load dynamic config file
