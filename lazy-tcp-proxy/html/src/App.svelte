@@ -85,7 +85,7 @@
   let interval
   onMount(() => {
     refresh()
-    interval = setInterval(refresh, 2000)
+    interval = setInterval(refresh, 3_000)
   })
   onDestroy(() => clearInterval(interval))
 </script>
@@ -151,16 +151,16 @@
                     </div>
                   {/each}
                 </td>
-                <td class="px-4 py-2.5 align-middle font-mono whitespace-nowrap text-[#A8A29E]">
+                <td class="px-4 py-2.5 align-middle font-mono whitespace-nowrap text-[#A8A29E]"  class:opacity-25={!snap.running}>
                   {snap.has_auth ? '🔒' : '🔓'} :{snap.listen_port}{udp} [{snap.availability}]
                 </td>
                 <td class="px-4 py-2.5 align-middle font-mono whitespace-nowrap text-[#A8A29E]">
                   <span title={si.title}>{si.icon}</span>
                   <span title={snap.has_compose_file ? 'Compose file found' : 'No compose file'} class:opacity-25={!snap.has_compose_file}>♻️</span>
                   <span title={snap.has_tar_gz ? 'Docker image tar found' : 'No docker image tar'} class:opacity-25={!snap.has_tar_gz}>📦</span>
-                  {snap.container_name}:{snap.target_port}{udp}
+                  <span class:opacity-25={!snap.running}>{snap.container_name}:{snap.target_port}{udp}</span>
                 </td>
-                <td class="px-4 py-2.5 align-middle font-mono whitespace-nowrap text-[#D97757] text-right">{snap.active_conns}</td>
+                <td class="px-4 py-2.5 align-middle font-mono whitespace-nowrap text-[#D97757] text-right" class:opacity-25={!snap.running}>{snap.active_conns}</td>
               </tr>
             {/each}
           {/if}
