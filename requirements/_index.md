@@ -107,3 +107,4 @@
 | REQ-103 | Svelte + Tailwind HTML Dashboard (html/ subfolder, embed into Go binary)  | Medium | Completed     | 2026-06-05 | [2026-06-05-svelte-html-dashboard.md](2026-06-05-svelte-html-dashboard.md) |
 | REQ-104 | CORS Allow Origins (`CORS_ALLOW_ORIGINS` env var)                         | Medium | Completed     | 2026-06-05 | [2026-06-05-cors-allow-origins.md](2026-06-05-cors-allow-origins.md) |
 | REQ-105 | Rename /metrics → /status; New /metrics Hourly-Activity Endpoint          | Medium | Completed     | 2026-06-05 | [2026-06-05-rename-metrics-to-status-and-new-metrics-endpoint.md](2026-06-05-rename-metrics-to-status-and-new-metrics-endpoint.md) |
+| REQ-106 | Custom Tooltip Component (Replace Native title Attributes)                 | Low    | In Progress   | 2026-06-05 | [2026-06-05-custom-tooltip-component.md](2026-06-05-custom-tooltip-component.md) |
