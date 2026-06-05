@@ -14,6 +14,8 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./lazy-tcp-proxy:/etc/lazy-tcp-proxy/
+    environment:
+      CORS_ALLOW_ORIGINS: http://localhost:8080
     ports:
       - "8080:8080"
     networks:
@@ -28,7 +30,7 @@ services:
     command:
       - "--log.level=DEBUG"
       - "--entrypoints.websecure.address=:443"
-      - "--entryPoints.websecure.transport.respondingTimeouts.readTimeout=0"
+      - "--entryPoints.websecure.transport.respondingTimeouts.readTimeout=15m"
       # provider
       - "--providers.http.endpoint=http://lazy-tcp-proxy:8080/traefik"
       - "--providers.http.pollinterval=5s"
@@ -47,7 +49,7 @@ services:
     restart: unless-stopped
 
   # docker run --rm httpd:2.4-alpine htpasswd -nbB admin 'superpassword' | cut -d ":" -f 2
-  # If resetting the password, ensure you remote the persisted
+  # If resetting the password, ensure you remove the 'portainer' folder.
   portainer:
     image: portainer/portainer-ce
     container_name: portainer

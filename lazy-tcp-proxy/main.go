@@ -216,7 +216,13 @@ func resolveTraefikTransportTimeouts() *traefikpkg.TransportTimeouts {
 var statusDashboardHTML string
 
 func resolveCORSAllowOrigins() string {
-	return os.Getenv("CORS_ALLOW_ORIGINS")
+	v := os.Getenv("CORS_ALLOW_ORIGINS")
+	if v == "" {
+		log.Println("CORS: disabled (CORS_ALLOW_ORIGINS not set)")
+	} else {
+		log.Printf("CORS: enabled (Access-Control-Allow-Origin: %s)", v)
+	}
+	return v
 }
 
 func corsMiddleware(origins string, next http.Handler) http.Handler {
