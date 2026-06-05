@@ -219,9 +219,20 @@ func (s *ProxyServer) SetScheduler(sched cronScheduler) {
 	s.sched = sched
 }
 
-// SetCollector injects the metrics collector. Must be called before Discover.
+// SetCollector injects the metrics collector and registers all already-tracked ports.
+// Ports discovered before this call are missed if the collector isn't set first, so
+// this back-fills them to handle the case where metrics initialisation happens after
+// initial target discovery.
 func (s *ProxyServer) SetCollector(c *metrics.Collector) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	s.collector = c
+	for _, ts := range s.targets {
+		c.RegisterPort(ts.listenPort, ts.info.ContainerName, false, types.EffectiveAvailability(ts.info))
+	}
+	for _, uls := range s.udpTargets {
+		c.RegisterPort(uls.listenPort, uls.info.ContainerName, true, types.EffectiveAvailability(uls.info))
+	}
 }
 
 // countingWriter wraps an io.Writer and accumulates the number of bytes written.
