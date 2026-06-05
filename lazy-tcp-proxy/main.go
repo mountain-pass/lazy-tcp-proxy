@@ -546,8 +546,9 @@ func main() {
 		log.Printf("initial discovery error: %v", err)
 	}
 
-	// Initialise metrics collector after network join and target registration,
-	// so a locally hosted PostgreSQL container is reachable via its Docker network.
+	// Initialise metrics collector after network join and target registration so
+	// a locally hosted PostgreSQL container is reachable via its Docker network.
+	// SetCollector back-fills all already-registered ports automatically.
 	if pgURL := resolveMetricsPostgresURL(); pgURL != "" {
 		log.Printf("metrics: connecting to PostgreSQL...")
 		collector, err := metrics.New(ctx, pgURL)
