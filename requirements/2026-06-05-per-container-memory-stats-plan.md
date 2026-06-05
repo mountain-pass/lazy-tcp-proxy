@@ -2,7 +2,7 @@
 
 **Requirement**: [2026-06-05-per-container-memory-stats.md](2026-06-05-per-container-memory-stats.md)
 **Date**: 2026-06-05
-**Status**: Draft
+**Status**: Implemented
 
 ## Implementation Steps
 

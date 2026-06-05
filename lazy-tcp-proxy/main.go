@@ -241,9 +241,13 @@ func runStatusServer(ctx context.Context, srv *proxy.ProxyServer, mgr backendMan
 	mux := http.NewServeMux()
 	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
 		var memUsed, memTotal *int64
-		if used, total, err := mgr.MemoryStats(r.Context()); err == nil {
+		var memContainers *[]types.ContainerMemoryStat
+		if used, total, perContainer, err := mgr.ContainerMemoryStats(r.Context()); err == nil {
 			memUsed = &used
 			memTotal = &total
+			if len(perContainer) > 0 {
+				memContainers = &perContainer
+			}
 		}
 		w.Header().Set("Content-Type", "application/json")
 		enc := json.NewEncoder(w)
@@ -252,6 +256,7 @@ func runStatusServer(ctx context.Context, srv *proxy.ProxyServer, mgr backendMan
 			"services":     srv.Snapshot(),
 			"memory_used":  memUsed,
 			"memory_total": memTotal,
+			"containers":   memContainers,
 		})
 	})
 	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
@@ -362,10 +367,11 @@ type backendManager interface {
 	// SetPortAllocator wires the dynamic port allocator used to assign listen ports
 	// to traefik_hosts / traefik_tcp_hosts label entries.
 	SetPortAllocator(a *types.PortAllocator)
-	// MemoryStats returns the total memory used by all running containers and
-	// the host's total physical memory, both in bytes. Returns (0, 0, nil) on
-	// backends where this is not applicable (e.g. Kubernetes).
-	MemoryStats(ctx context.Context) (used, total int64, err error)
+	// ContainerMemoryStats returns the aggregate memory used by all running
+	// containers, the host's total physical memory, and a per-container
+	// breakdown, all in bytes. Returns (0, 0, nil, nil) on backends where this
+	// is not applicable (e.g. Kubernetes).
+	ContainerMemoryStats(ctx context.Context) (used, total int64, containers []types.ContainerMemoryStat, err error)
 }
 
 // discoverAndApply runs backend discovery, applies the YAML config overlay,
