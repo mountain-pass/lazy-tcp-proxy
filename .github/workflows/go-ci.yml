@@ -6,12 +6,14 @@ on:
     paths:
       - ".github/workflows/go-ci.yml"
       - "lazy-tcp-proxy/**"
+      - "html/**"
 
   pull_request:
     branches: ["**"]
     paths:
       - ".github/workflows/go-ci.yml"
       - "lazy-tcp-proxy/**"
+      - "html/**"
 
 permissions:
   contents: read
@@ -22,6 +24,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: lazy-tcp-proxy/html/package-lock.json
+      - name: Build HTML dashboard
+        working-directory: lazy-tcp-proxy/html
+        run: npm ci && npm run build
       - uses: actions/setup-go@v6
         with:
           go-version-file: lazy-tcp-proxy/go.mod
@@ -35,6 +45,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: lazy-tcp-proxy/html/package-lock.json
+      - name: Build HTML dashboard
+        working-directory: lazy-tcp-proxy/html
+        run: npm ci && npm run build
       - uses: actions/setup-go@v6
         with:
           go-version-file: lazy-tcp-proxy/go.mod
