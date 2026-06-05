@@ -3,6 +3,7 @@ package docker
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/containerd/errdefs"
+	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/events"
 	"github.com/moby/moby/api/types/swarm"
 	"github.com/moby/moby/client"
@@ -1147,4 +1149,52 @@ func (m *Manager) WatchEvents(ctx context.Context, handler types.TargetHandler) 
 			}
 		}
 	}
+}
+
+// MemoryStats returns the total memory used by all running containers and the
+// host's total available memory, both in bytes. Uses a 3-second timeout.
+// Returns (0, 0, err) on failure so callers can treat both values as nullable.
+func (m *Manager) MemoryStats(ctx context.Context) (used, total int64, err error) {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	infoResult, err := m.cli.Info(ctx, client.InfoOptions{})
+	if err != nil {
+		return 0, 0, fmt.Errorf("docker info: %w", err)
+	}
+	total = infoResult.Info.MemTotal
+
+	containers, err := m.cli.ContainerList(ctx, client.ContainerListOptions{})
+	if err != nil {
+		return 0, total, fmt.Errorf("container list: %w", err)
+	}
+
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	for _, c := range containers.Items {
+		wg.Add(1)
+		go func(id string) {
+			defer wg.Done()
+			result, statErr := m.cli.ContainerStats(ctx, id, client.ContainerStatsOptions{Stream: false})
+			if statErr != nil {
+				return
+			}
+			defer result.Body.Close() //nolint:errcheck
+			var s container.StatsResponse
+			if decErr := json.NewDecoder(result.Body).Decode(&s); decErr != nil {
+				return
+			}
+			memUsage := s.MemoryStats.Usage
+			if cache, ok := s.MemoryStats.Stats["inactive_file"]; ok {
+				if cache < memUsage {
+					memUsage -= cache
+				}
+			}
+			mu.Lock()
+			used += int64(memUsage) //nolint:gosec
+			mu.Unlock()
+		}(c.ID)
+	}
+	wg.Wait()
+	return used, total, nil
 }

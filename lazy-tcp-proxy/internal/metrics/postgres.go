@@ -90,6 +90,33 @@ func (db *postgresDB) close() {
 	db.pool.Close()
 }
 
+const queryHourlyActivity = `
+SELECT container_name, port, is_udp, date_trunc('hour', rollup_at) AS hour
+FROM proxy_metrics
+WHERE rollup_at >= NOW() - INTERVAL '7 days'
+  AND uptime_ms_total > 0
+GROUP BY container_name, port, is_udp, date_trunc('hour', rollup_at)
+ORDER BY container_name, port, is_udp, hour
+`
+
+func (db *postgresDB) hourlyActivity(ctx context.Context) ([]HourlyActivityRow, error) {
+	rows, err := db.pool.Query(ctx, queryHourlyActivity)
+	if err != nil {
+		return nil, fmt.Errorf("hourlyActivity query: %w", err)
+	}
+	defer rows.Close()
+	var out []HourlyActivityRow
+	for rows.Next() {
+		var r HourlyActivityRow
+		if err := rows.Scan(&r.ContainerName, &r.Port, &r.IsUDP, &r.Hour); err != nil {
+			return nil, fmt.Errorf("hourlyActivity scan: %w", err)
+		}
+		r.Active = true
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 // retryBuffer holds up to 5 failed snapshots, oldest first.
 // When full, push drops the oldest to make room for the newest.
 type retryBuffer struct {

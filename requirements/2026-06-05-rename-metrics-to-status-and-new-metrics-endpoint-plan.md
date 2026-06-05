@@ -2,7 +2,7 @@
 
 **Requirement**: [2026-06-05-rename-metrics-to-status-and-new-metrics-endpoint.md](2026-06-05-rename-metrics-to-status-and-new-metrics-endpoint.md)
 **Date**: 2026-06-05
-**Status**: Approved
+**Status**: Implemented
 
 ## Implementation Steps
 

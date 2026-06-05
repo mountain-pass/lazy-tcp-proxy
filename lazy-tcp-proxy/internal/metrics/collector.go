@@ -8,6 +8,15 @@ import (
 	"time"
 )
 
+// HourlyActivityRow represents one active hour for a (container_name, port, is_udp) tuple.
+type HourlyActivityRow struct {
+	ContainerName string    `json:"container_name"`
+	Port          int       `json:"port"`
+	IsUDP         bool      `json:"is_udp"`
+	Hour          time.Time `json:"hour"`
+	Active        bool      `json:"active"`
+}
+
 // Snapshot is one minute of data for a single port, written as a row in proxy_metrics.
 type Snapshot struct {
 	RollupAt             time.Time
@@ -251,6 +260,12 @@ func (c *Collector) ContainerStopped(port int, isUDP bool) {
 		a.containerRunning = false
 	}
 	a.mu.Unlock()
+}
+
+// HourlyActivity queries the last 7 days of metrics and returns one row per
+// (container_name, port, is_udp, hour) bucket where uptime_ms_total > 0.
+func (c *Collector) HourlyActivity(ctx context.Context) ([]HourlyActivityRow, error) {
+	return c.db.hourlyActivity(ctx)
 }
 
 // Run starts the 1-minute rollup loop. Blocks until ctx is cancelled.
