@@ -104,3 +104,4 @@
 | REQ-100 | Portainer Template Metadata Override via `x-portainer` YAML Section      | Medium | Completed         | 2026-06-04 | [2026-06-04-portainer-x-portainer-metadata-override.md](2026-06-04-portainer-x-portainer-metadata-override.md) |
 | REQ-101 | Dynamic Port Allocation for `traefik_hosts` / `traefik_tcp_hosts`        | High   | Completed     | 2026-06-04 | [2026-06-04-dynamic-port-allocation-traefik-hosts.md](2026-06-04-dynamic-port-allocation-traefik-hosts.md) |
 | REQ-102 | Fix: /metrics Missing Containers with Only Dynamic Port Mappings          | High   | Completed     | 2026-06-04 | [2026-06-04-fix-metrics-dynamic-port-containers.md](2026-06-04-fix-metrics-dynamic-port-containers.md) |
+| REQ-103 | CORS Allow Origins (`CORS_ALLOW_ORIGINS` env var)                         | Medium | Planned       | 2026-06-05 | [2026-06-05-cors-allow-origins.md](2026-06-05-cors-allow-origins.md) |
