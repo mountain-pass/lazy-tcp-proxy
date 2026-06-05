@@ -15,7 +15,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./lazy-tcp-proxy:/etc/lazy-tcp-proxy/
     environment:
-      CORS_ALLOW_ORIGINS: http://localhost:8080
+      CORS_ALLOW_ORIGINS: "*"
     ports:
       - "8080:8080"
     networks:
