@@ -68,9 +68,9 @@
     <div class="text-xs text-[#78716C]">{lastUpdated}</div>
     {#if memoryTotal > 0}
     {@const pct = Math.round((memoryUsed / memoryTotal) * 100)}
-    <span class="text-xs text-[#78716C]">Memory: {formatBytes(memoryUsed)} / {formatBytes(memoryTotal)}</span>
+    <span class="text-xs text-[#78716C]">Memory: {formatBytes(memoryUsed)} / {formatBytes(memoryTotal)} ({pct}%)</span>
       <div class="mt-2 flex items-center gap-2">
-        <div class="w-64 h-1.5 rounded-full bg-[#3B3837] overflow-hidden">
+        <div class="w-64 h-2 rounded-full bg-[#3B3837] overflow-hidden">
           <div class="h-full rounded-full bg-[#D97757] transition-all" style="width: {pct}%"></div>
         </div>
       </div>
