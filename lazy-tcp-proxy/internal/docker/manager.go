@@ -1187,8 +1187,12 @@ func (m *Manager) ContainerMemoryStats(ctx context.Context) (used, total int64, 
 				if inspectErr != nil || inspectResult.Container.HostConfig == nil {
 					return
 				}
+				limit := inspectResult.Container.HostConfig.Memory
+				if limit == 0 {
+					limit = total
+				}
 				mu.Lock()
-				perContainer = append(perContainer, types.ContainerMemoryStat{Name: name, MemoryUsed: 0, MemoryLimit: inspectResult.Container.HostConfig.Memory, Running: false})
+				perContainer = append(perContainer, types.ContainerMemoryStat{Name: name, MemoryUsed: 0, MemoryLimit: limit, Running: false})
 				mu.Unlock()
 				return
 			}
