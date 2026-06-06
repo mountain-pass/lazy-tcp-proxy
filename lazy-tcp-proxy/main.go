@@ -237,6 +237,19 @@ func corsMiddleware(origins string, next http.Handler) http.Handler {
 	})
 }
 
+// diskUsage returns the used and total bytes of the root ("/") filesystem,
+// equivalent to `df /`. It reflects the filesystem the proxy process runs on
+// (the host filesystem, or the container's root mount when containerized).
+func diskUsage() (used, total int64, ok bool) {
+	var stat syscall.Statfs_t
+	if err := syscall.Statfs("/", &stat); err != nil {
+		return 0, 0, false
+	}
+	total = int64(stat.Blocks) * int64(stat.Bsize)
+	used = total - int64(stat.Bavail)*int64(stat.Bsize)
+	return used, total, true
+}
+
 func runStatusServer(ctx context.Context, srv *proxy.ProxyServer, mgr backendManager, metricsCollector **metrics.Collector, port int, traefikProxyHost, traefikEntryPoint, traefikCertResolver, webHost string, webPort int, traefikTimeouts *traefikpkg.TransportTimeouts, recipesDir, corsOrigins string) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
@@ -249,6 +262,11 @@ func runStatusServer(ctx context.Context, srv *proxy.ProxyServer, mgr backendMan
 				memContainers = &perContainer
 			}
 		}
+		var diskUsed, diskTotal *int64
+		if used, total, ok := diskUsage(); ok {
+			diskUsed = &used
+			diskTotal = &total
+		}
 		w.Header().Set("Content-Type", "application/json")
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
@@ -257,6 +275,8 @@ func runStatusServer(ctx context.Context, srv *proxy.ProxyServer, mgr backendMan
 			"memory_used":  memUsed,
 			"memory_total": memTotal,
 			"containers":   memContainers,
+			"disk_used":    diskUsed,
+			"disk_total":   diskTotal,
 		})
 	})
 	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {

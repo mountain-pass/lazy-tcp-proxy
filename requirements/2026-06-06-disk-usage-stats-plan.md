@@ -2,7 +2,7 @@
 
 **Requirement**: [2026-06-06-disk-usage-stats.md](2026-06-06-disk-usage-stats.md)
 **Date**: 2026-06-06
-**Status**: Draft
+**Status**: Implemented
 
 ## Implementation Steps
 
@@ -93,3 +93,12 @@ if u, t, ok := diskUsage(); ok {
 - **Container vs. host view**: when the proxy runs inside a container, `statfs("/")` reports the container's root mount — for typical Docker overlay2 setups this reflects the host drive's capacity, but in unusual configurations (e.g. a size-constrained overlay or a separate volume mounted at `/`) it may not equal the true host disk. This matches the requirement's stated scope ("the drive the proxy runs on") and needs no special handling — just worth noting in user-facing docs if it ever causes confusion.
 - **`golang.org/x/sys/unix` is Linux/Unix-specific** (`Statfs_t` field types/names can differ slightly across Unix variants, e.g. `Bsize` is `int64` on Linux/amd64 but may be `int32` on other arches — the snippet above assumes Linux, matching the project's existing Linux-only scope; no build tags needed since no darwin/windows code exists in the repo).
 - **Frontend label**: confirm whether `MemoryBar.svelte` needs a `label`/`title` prop added, or whether surrounding markup already provides "Memory" / "Disk" section headers — small UI decision to make during Build, not expected to be contentious.
+
+## Implementation Notes (Actual)
+
+- Used `syscall.Statfs("/", &stat)` instead of `golang.org/x/sys/unix` — `syscall` was already imported in `main.go`, so no new import was needed; behaviour is identical on Linux.
+- `diskUsage()` added directly above `runStatusServer` in `main.go`, returning `(used, total int64, ok bool)`.
+- Wired `disk_used`/`disk_total` (`*int64`, nullable) into the `/status` JSON map alongside `memory_used`/`memory_total`.
+- `MemoryBar.svelte` required no changes — it's already generic over bytes. Added a "Disk (/):" text label beside a new `<MemoryBar>` instance in `App.svelte`, placed in a flex row alongside the "Memory:" block, each shown independently when its respective total is > 0.
+- Added `TestDiskUsage_RootFilesystem` to `main_test.go`.
+- `go build ./...`, `golangci-lint run` (0 issues), and `go test ./...` all pass.

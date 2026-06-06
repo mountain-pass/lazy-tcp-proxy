@@ -2,7 +2,7 @@
 
 **Date Added**: 2026-06-06
 **Priority**: Medium
-**Status**: In Progress
+**Status**: Completed
 
 ## Problem Statement
 
@@ -28,11 +28,11 @@ The `/status` endpoint currently exposes overall memory usage (`memory_used`/`me
 
 ## Acceptance Criteria
 
-- [ ] `GET /status` response includes overall `disk_used`/`disk_total` fields reflecting the root (`/`) filesystem's used vs. total bytes (via `statfs`).
-- [ ] Fields are omitted (not erroring, not blocking) if the `statfs` call fails.
-- [ ] The dashboard displays overall disk used vs. total at the top of the page, formatted consistently with the existing memory display.
-- [ ] No regression to existing `memory_*` fields or other `/status` content.
-- [ ] `go build ./...`, `golangci-lint run`, and `go test ./...` all pass with no new violations.
+- [x] `GET /status` response includes overall `disk_used`/`disk_total` fields reflecting the root (`/`) filesystem's used vs. total bytes (via `statfs`).
+- [x] Fields are omitted (not erroring, not blocking) if the `statfs` call fails.
+- [x] The dashboard displays overall disk used vs. total at the top of the page, formatted consistently with the existing memory display.
+- [x] No regression to existing `memory_*` fields or other `/status` content.
+- [x] `go build ./...`, `golangci-lint run`, and `go test ./...` all pass with no new violations.
 
 ## Dependencies
 
