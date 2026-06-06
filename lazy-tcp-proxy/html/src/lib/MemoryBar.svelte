@@ -1,5 +1,5 @@
 <script>
-  let { used = 0, limit = 0, barWidth = 'w-20' } = $props()
+  let { used = 0, limit = 0, barWidth = 'w-20', active = true } = $props()
 
   function formatBytes(bytes) {
     if (bytes >= 1073741824) return (bytes / 1073741824).toFixed(1) + ' GB'
@@ -11,7 +11,7 @@
   let pct = $derived(limit > 0 ? Math.round((used / limit) * 100) : 0)
 </script>
 
-<div class="flex items-center gap-2">
+<div class="flex items-center gap-2" class:opacity-25={!active}>
   <div class="{barWidth} h-2 rounded-full bg-[#3B3837] overflow-hidden shrink-0">
     <div class="h-full rounded-full bg-[#D97757] transition-all" style="width: {pct}%"></div>
   </div>

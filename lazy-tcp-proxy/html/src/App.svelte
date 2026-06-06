@@ -138,7 +138,7 @@
     {#if memoryTotal > 0 || diskTotal > 0}
       <div class="mb-4 flex flex-wrap gap-8">
         {#if memoryTotal > 0}
-          <div>
+          <div class="w-110">
             <span class="text-xs text-[#78716C]">Memory:</span>
             <div class="mt-2">
               <MemoryBar used={memoryUsed} limit={memoryTotal} barWidth="w-64" />
@@ -146,7 +146,7 @@
           </div>
         {/if}
         {#if diskTotal > 0}
-          <div>
+          <div class="w-110">
             <span class="text-xs text-[#78716C]">Disk (/):</span>
             <div class="mt-2">
               <MemoryBar used={diskUsed} limit={diskTotal} barWidth="w-64" />
@@ -201,7 +201,7 @@
                 <td class="px-4 py-2.5 align-middle font-mono whitespace-nowrap text-[#D97757] text-right" class:opacity-25={!snap.running}>{snap.active_conns}</td>
                 <td class="px-4 py-2.5 align-middle font-mono whitespace-nowrap">
                   {#if showMemory}
-                    <MemoryBar used={mem.memory_used} limit={mem.memory_limit} />
+                    <MemoryBar used={mem.memory_used} limit={mem.memory_limit} active={snap.running} />
                   {/if}
                 </td>
               </tr>
