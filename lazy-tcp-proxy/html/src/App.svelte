@@ -146,7 +146,7 @@
       <table class="border-collapse text-[0.84rem]">
         <thead>
           <tr class="bg-[#292524]">
-            {#each ['dns', 'proxy', 'target', 'memory', 'connections'] as col}
+            {#each ['dns', 'proxy', 'target', 'connections', 'memory'] as col}
               <th class="px-4 py-2.5 text-[0.68rem] font-semibold uppercase tracking-widest text-[#78716C] border-b border-[#3B3837] {col === 'connections' ? 'text-right' : 'text-left'}">{col}</th>
             {/each}
           </tr>
@@ -182,12 +182,12 @@
                   <span title={snap.has_tar_gz ? 'Docker image tar found' : 'No docker image tar'} class:opacity-25={!snap.has_tar_gz}>📦</span>
                   <span class:opacity-25={!snap.running}>{snap.container_name}:{snap.target_port}{udp}</span>
                 </td>
+                <td class="px-4 py-2.5 align-middle font-mono whitespace-nowrap text-[#D97757] text-right" class:opacity-25={!snap.running}>{snap.active_conns}</td>
                 <td class="px-4 py-2.5 align-middle font-mono whitespace-nowrap">
                   {#if showMemory}
                     <MemoryBar used={mem.memory_used} limit={mem.memory_limit} />
                   {/if}
                 </td>
-                <td class="px-4 py-2.5 align-middle font-mono whitespace-nowrap text-[#D97757] text-right" class:opacity-25={!snap.running}>{snap.active_conns}</td>
               </tr>
             {/each}
           {/if}
