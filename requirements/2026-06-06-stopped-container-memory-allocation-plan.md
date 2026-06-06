@@ -20,7 +20,7 @@
    - Change `m.cli.ContainerList(ctx, client.ContainerListOptions{})` to `client.ContainerListOptions{All: true}`.
    - In the per-container goroutine, branch on `c.State == container.StateRunning` (or compare to `"running"` if no constant is exported — check `container.ContainerState` for available constants):
      - **Running**: keep existing `ContainerStats` fan-out logic unchanged (usage = `Usage - inactive_file`, limit = `MemoryStats.Limit`, contributes to aggregate `used`).
-     - **Not running**: call `m.cli.ContainerInspect(ctx, id, client.ContainerInspectOptions{})`; set `MemoryUsed: 0`, `MemoryLimit: inspectResult.Container.HostConfig.Memory`, `Running: false`. Do NOT add to aggregate `used`.
+     - **Not running**: call `m.cli.ContainerInspect(ctx, id, client.ContainerInspectOptions{})`; set `MemoryUsed: 0`, `MemoryLimit: inspectResult.Container.HostConfig.Memory` (falling back to `total`, the host's total memory, when `HostConfig.Memory == 0`), `Running: false`. Do NOT add to aggregate `used`.
    - Set `Running: true` for the running branch.
    - Guard nil `HostConfig` (defensive — Inspect should always populate it for real containers, but check before dereferencing).
 
@@ -43,7 +43,8 @@
 {
   "containers": [
     { "name": "my-postgres", "memory_used": 52428800, "memory_limit": 536870912, "running": true },
-    { "name": "my-idle-app", "memory_used": 0,         "memory_limit": 268435456, "running": false }
+    { "name": "my-idle-app", "memory_used": 0,         "memory_limit": 268435456, "running": false },
+    { "name": "my-unlimited-app", "memory_used": 0,     "memory_limit": 8589934592, "running": false }
   ]
 }
 ```
