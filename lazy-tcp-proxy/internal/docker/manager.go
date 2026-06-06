@@ -1153,7 +1153,9 @@ func (m *Manager) WatchEvents(ctx context.Context, handler types.TargetHandler) 
 
 // ContainerMemoryStats returns the aggregate memory used by all running
 // containers, the host's total available memory, and a per-container
-// breakdown, all in bytes. Uses a 3-second timeout.
+// breakdown (covering both running and stopped containers), all in bytes.
+// Stopped containers report zero usage and their configured memory limit.
+// Uses a 3-second timeout.
 func (m *Manager) ContainerMemoryStats(ctx context.Context) (used, total int64, perContainer []types.ContainerMemoryStat, err error) {
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
@@ -1164,7 +1166,7 @@ func (m *Manager) ContainerMemoryStats(ctx context.Context) (used, total int64, 
 	}
 	total = infoResult.Info.MemTotal
 
-	containers, err := m.cli.ContainerList(ctx, client.ContainerListOptions{})
+	containers, err := m.cli.ContainerList(ctx, client.ContainerListOptions{All: true})
 	if err != nil {
 		return 0, total, nil, fmt.Errorf("container list: %w", err)
 	}
@@ -1173,8 +1175,24 @@ func (m *Manager) ContainerMemoryStats(ctx context.Context) (used, total int64, 
 	var wg sync.WaitGroup
 	for _, c := range containers.Items {
 		wg.Add(1)
-		go func(id string, names []string) {
+		go func(id string, names []string, state container.ContainerState) {
 			defer wg.Done()
+			name := id
+			if len(names) > 0 {
+				name = strings.TrimPrefix(names[0], "/")
+			}
+
+			if state != container.StateRunning {
+				inspectResult, inspectErr := m.cli.ContainerInspect(ctx, id, client.ContainerInspectOptions{})
+				if inspectErr != nil || inspectResult.Container.HostConfig == nil {
+					return
+				}
+				mu.Lock()
+				perContainer = append(perContainer, types.ContainerMemoryStat{Name: name, MemoryUsed: 0, MemoryLimit: inspectResult.Container.HostConfig.Memory, Running: false})
+				mu.Unlock()
+				return
+			}
+
 			result, statErr := m.cli.ContainerStats(ctx, id, client.ContainerStatsOptions{Stream: false})
 			if statErr != nil {
 				return
@@ -1190,15 +1208,11 @@ func (m *Manager) ContainerMemoryStats(ctx context.Context) (used, total int64, 
 					memUsage -= cache
 				}
 			}
-			name := id
-			if len(names) > 0 {
-				name = strings.TrimPrefix(names[0], "/")
-			}
 			mu.Lock()
-			used += int64(memUsage)                                                                                         //nolint:gosec
-			perContainer = append(perContainer, types.ContainerMemoryStat{Name: name, MemoryUsed: int64(memUsage), MemoryLimit: int64(s.MemoryStats.Limit)}) //nolint:gosec
+			used += int64(memUsage)                                                                                                                            //nolint:gosec
+			perContainer = append(perContainer, types.ContainerMemoryStat{Name: name, MemoryUsed: int64(memUsage), MemoryLimit: int64(s.MemoryStats.Limit), Running: true}) //nolint:gosec
 			mu.Unlock()
-		}(c.ID, c.Names)
+		}(c.ID, c.Names, c.State)
 	}
 	wg.Wait()
 	return used, total, perContainer, nil
