@@ -308,13 +308,30 @@ This should be core functionality in the docker engine. As such, I've raised a F
 
 ## Caveats
 
-### `docker system prune` removes stopped containers
+### Avoid `docker system prune` — it removes stopped containers
 
 `docker system prune` removes **all stopped containers** by default, not just unused images and build cache. Because `lazy-tcp-proxy` stops idle containers to save resources, your managed containers will almost certainly be stopped at the time you run the command — and will be permanently deleted.
 
 > **Warning:** Do not run `docker system prune` (or `docker container prune`) on a host running `lazy-tcp-proxy` unless you intend to remove your managed containers.
 
 If a config-only container (one registered via `config.yaml` rather than Docker labels) is removed this way, the proxy keeps its listener alive and waits for the container to be recreated. The status dashboard will show ⚠️ next to the container name until it comes back online. Run `docker compose up` (or equivalent) to recreate it — or let the proxy re-provision it automatically using [Compose Re-provisioning](#compose-re-provisioning).
+
+#### Cleaning up safely instead
+
+To reclaim disk space without touching your (possibly stopped) managed containers, run the following commands individually instead of `docker system prune`:
+
+```sh
+# Remove dangling images
+docker image prune
+
+# Remove unused networks
+docker network prune
+
+# Remove unused volumes (optional, add if you want to clear volume space)
+docker volume prune
+```
+
+These clean up images, networks, and volumes without removing any containers — stopped or otherwise.
 
 ---
 
