@@ -10,9 +10,11 @@ import (
 
 // ServiceActivity holds the weekly usage heatmap for one (container_name, port, is_udp) tuple.
 // Each day field is a 24-element array indexed by hour-of-day (0–23).
-// A value of 1 means at least one proxy_metrics row in the last 7 days for that
-// weekday+hour had uptime_ms_total > 0; 0 means no activity.
-// Active is true if any cell across all seven days is 1.
+// Cell values: 0 = no activity (no uptime); 1 = active (uptime_ms_total > 0
+// but no connections started); 2 = active with connections (uptime_ms_total > 0
+// and at least one connection started), based on proxy_metrics rows from the
+// last 7 days for that weekday+hour.
+// Active is true if any cell across all seven days is non-zero.
 type ServiceActivity struct {
 	ContainerName string   `json:"container_name"`
 	Port          int      `json:"port"`

@@ -235,7 +235,7 @@
               <div class="flex items-center gap-[3px]">
                 <span class="w-8 text-[0.65rem] text-[#57534E] text-right pr-1">{DAY_LABELS[di]}</span>
                 {#each HOURS as h}
-                  <div class="w-3.5 h-3.5 rounded-sm {local[day][h] ? 'bg-[#D97757]' : 'bg-[#292524]'}" title="{DAY_LABELS[di]} {h}:00"></div>
+                  <div class="w-3.5 h-3.5 rounded-sm {local[day][h] === 2 ? 'bg-[#4ADE80]' : local[day][h] === 1 ? 'bg-[#D97757]' : 'bg-[#292524]'}" title="{DAY_LABELS[di]} {h}:00"></div>
                 {/each}
               </div>
             {/each}

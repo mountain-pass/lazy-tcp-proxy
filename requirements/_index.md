@@ -114,3 +114,4 @@
 | REQ-110 | Dashboard Per-Container Memory Column                                       | Low    | Completed     | 2026-06-06 | [2026-06-06-dashboard-per-container-memory-column.md](2026-06-06-dashboard-per-container-memory-column.md) |
 | REQ-111 | Include Stopped Containers' Allocated Memory in /status                     | Medium | Completed     | 2026-06-06 | [2026-06-06-stopped-container-memory-allocation.md](2026-06-06-stopped-container-memory-allocation.md) |
 | REQ-112 | Overall "/" Root Drive Disk Usage in /status Endpoint                      | Medium | Completed   | 2026-06-06 | [2026-06-06-disk-usage-stats.md](2026-06-06-disk-usage-stats.md) |
+| REQ-113 | /metrics Heatmap — Third State for Active Connections                       | Low    | Completed   | 2026-06-06 | [2026-06-06-metrics-heatmap-active-connections-state.md](2026-06-06-metrics-heatmap-active-connections-state.md) |
