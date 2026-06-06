@@ -7,6 +7,8 @@
   let error = $state('')
   let memoryUsed = $state(0)
   let memoryTotal = $state(0)
+  let diskUsed = $state(0)
+  let diskTotal = $state(0)
   let containers = $state([])
 
   let serviceRows = $derived.by(() => {
@@ -54,6 +56,8 @@
       services = data.services
       memoryUsed = data.memory_used ?? 0
       memoryTotal = data.memory_total ?? 0
+      diskUsed = data.disk_used ?? 0
+      diskTotal = data.disk_total ?? 0
       containers = data.containers ?? []
       error = ''
     } catch (e) {
@@ -131,12 +135,24 @@
   </div>
 
   {#if activeTab === 'status'}
-    {#if memoryTotal > 0}
-      <div class="mb-4">
-        <span class="text-xs text-[#78716C]">Memory:</span>
-        <div class="mt-2">
-          <MemoryBar used={memoryUsed} limit={memoryTotal} barWidth="w-64" />
-        </div>
+    {#if memoryTotal > 0 || diskTotal > 0}
+      <div class="mb-4 flex flex-wrap gap-8">
+        {#if memoryTotal > 0}
+          <div>
+            <span class="text-xs text-[#78716C]">Memory:</span>
+            <div class="mt-2">
+              <MemoryBar used={memoryUsed} limit={memoryTotal} barWidth="w-64" />
+            </div>
+          </div>
+        {/if}
+        {#if diskTotal > 0}
+          <div>
+            <span class="text-xs text-[#78716C]">Disk (/):</span>
+            <div class="mt-2">
+              <MemoryBar used={diskUsed} limit={diskTotal} barWidth="w-64" />
+            </div>
+          </div>
+        {/if}
       </div>
     {/if}
     {#if error}
