@@ -1,18 +1,25 @@
 <script>
   import { onMount, onDestroy } from 'svelte'
+  import MemoryBar from './lib/MemoryBar.svelte'
 
   let services = $state([])
   let lastUpdated = $state('Loading…')
   let error = $state('')
   let memoryUsed = $state(0)
   let memoryTotal = $state(0)
+  let containers = $state([])
 
-  function formatBytes(bytes) {
-    if (bytes >= 1073741824) return (bytes / 1073741824).toFixed(1) + ' GB'
-    if (bytes >= 1048576) return (bytes / 1048576).toFixed(1) + ' MB'
-    if (bytes >= 1024) return (bytes / 1024).toFixed(1) + ' KB'
-    return bytes + ' B'
-  }
+  let serviceRows = $derived.by(() => {
+    const seen = new Set()
+    const byName = new Map(containers.map(c => [c.name, c]))
+    return services.map(snap => {
+      const name = snap.container_name
+      const mem = byName.get(name)
+      const showMemory = !!mem && !seen.has(name)
+      if (mem) seen.add(name)
+      return { snap, mem, showMemory }
+    })
+  })
 
   function statusIcon(snap) {
     if (snap.container_missing) return { icon: '⚠️', title: 'Container missing' }
@@ -47,6 +54,7 @@
       services = data.services
       memoryUsed = data.memory_used ?? 0
       memoryTotal = data.memory_total ?? 0
+      containers = data.containers ?? []
       error = ''
     } catch (e) {
       error = 'Failed to fetch status: ' + e.message
@@ -124,13 +132,10 @@
 
   {#if activeTab === 'status'}
     {#if memoryTotal > 0}
-      {@const pct = Math.round((memoryUsed / memoryTotal) * 100)}
       <div class="mb-4">
-        <span class="text-xs text-[#78716C]">Memory: {formatBytes(memoryUsed)} / {formatBytes(memoryTotal)} ({pct}%)</span>
-        <div class="mt-2 flex items-center gap-2">
-          <div class="w-64 h-2 rounded-full bg-[#3B3837] overflow-hidden">
-            <div class="h-full rounded-full bg-[#D97757] transition-all" style="width: {pct}%"></div>
-          </div>
+        <span class="text-xs text-[#78716C]">Memory:</span>
+        <div class="mt-2">
+          <MemoryBar used={memoryUsed} limit={memoryTotal} barWidth="w-64" />
         </div>
       </div>
     {/if}
@@ -141,7 +146,7 @@
       <table class="border-collapse text-[0.84rem]">
         <thead>
           <tr class="bg-[#292524]">
-            {#each ['dns', 'proxy', 'target', 'connections'] as col}
+            {#each ['dns', 'proxy', 'target', 'memory', 'connections'] as col}
               <th class="px-4 py-2.5 text-[0.68rem] font-semibold uppercase tracking-widest text-[#78716C] border-b border-[#3B3837] {col === 'connections' ? 'text-right' : 'text-left'}">{col}</th>
             {/each}
           </tr>
@@ -149,10 +154,10 @@
         <tbody>
           {#if services.length === 0}
             <tr>
-              <td colspan="4" class="italic text-[#57534E] font-sans px-4 py-5">No services registered.</td>
+              <td colspan="5" class="italic text-[#57534E] font-sans px-4 py-5">No services registered.</td>
             </tr>
           {:else}
-            {#each services as snap}
+            {#each serviceRows as { snap, mem, showMemory }}
               {@const udp = snap.is_udp ? '/udp' : ''}
               {@const dns = dnsForPort(snap)}
               {@const si = statusIcon(snap)}
@@ -176,6 +181,11 @@
                   <span title={snap.has_compose_file ? 'Compose file found' : 'No compose file'} class:opacity-25={!snap.has_compose_file}>♻️</span>
                   <span title={snap.has_tar_gz ? 'Docker image tar found' : 'No docker image tar'} class:opacity-25={!snap.has_tar_gz}>📦</span>
                   <span class:opacity-25={!snap.running}>{snap.container_name}:{snap.target_port}{udp}</span>
+                </td>
+                <td class="px-4 py-2.5 align-middle font-mono whitespace-nowrap">
+                  {#if showMemory}
+                    <MemoryBar used={mem.memory_used} limit={mem.memory_limit} />
+                  {/if}
                 </td>
                 <td class="px-4 py-2.5 align-middle font-mono whitespace-nowrap text-[#D97757] text-right" class:opacity-25={!snap.running}>{snap.active_conns}</td>
               </tr>
