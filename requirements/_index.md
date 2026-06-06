@@ -111,3 +111,4 @@
 | REQ-107 | /metrics Weekly Heatmap Response Shape                                     | Medium | Completed     | 2026-06-05 | [2026-06-05-metrics-weekly-heatmap-shape.md](2026-06-05-metrics-weekly-heatmap-shape.md) |
 | REQ-108 | Dashboard Tab Navigation: Status & Metrics Heatmap                         | Medium | Completed     | 2026-06-05 | [2026-06-05-dashboard-tabs-status-metrics.md](2026-06-05-dashboard-tabs-status-metrics.md) |
 | REQ-109 | Per-Container Memory Stats in /status Endpoint                              | Medium | Completed     | 2026-06-05 | [2026-06-05-per-container-memory-stats.md](2026-06-05-per-container-memory-stats.md) |
+| REQ-110 | Dashboard Per-Container Memory Column                                       | Low    | Completed     | 2026-06-06 | [2026-06-06-dashboard-per-container-memory-column.md](2026-06-06-dashboard-per-container-memory-column.md) |
