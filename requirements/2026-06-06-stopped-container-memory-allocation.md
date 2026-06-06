@@ -14,7 +14,7 @@ The `containers` array in the `/status` response (added by REQ-109) only include
 2. Each entry MUST gain a `running` boolean field indicating whether the container is currently running.
 3. For stopped containers:
    - `memory_used` MUST be `0` (no live usage data is available).
-   - `memory_limit` MUST reflect the container's configured memory limit (`HostConfig.Memory` from `ContainerInspect`), or `0` if no limit is configured (consistent with the existing "0 = unlimited" convention for running containers).
+   - `memory_limit` MUST reflect the container's configured memory limit (`HostConfig.Memory` from `ContainerInspect`), falling back to the host's total memory (`memory_total`) when no limit is configured (i.e. `HostConfig.Memory == 0`) — consistent with how the dashboard interprets `memory_limit` for running containers.
 4. For running containers, behaviour is unchanged from REQ-109 (`memory_used`/`memory_limit` sourced from `ContainerStats`).
 5. The aggregate `memory_used` / `memory_total` fields MUST remain unchanged (i.e. still computed only from running containers).
 
@@ -25,7 +25,7 @@ The `containers` array in the `/status` response (added by REQ-109) only include
 ## Technical Requirements
 
 - Extend `ContainerMemoryStats` in `internal/docker/manager.go` to list **all** containers (`ContainerListOptions{All: true}`) instead of only running ones.
-- For containers whose `State` is not `"running"`, skip the `ContainerStats` call (it returns no useful data for stopped containers) and instead call `ContainerInspect` to read `HostConfig.Memory` as `memory_limit`, with `memory_used` set to `0`.
+- For containers whose `State` is not `"running"`, skip the `ContainerStats` call (it returns no useful data for stopped containers) and instead call `ContainerInspect` to read `HostConfig.Memory` as `memory_limit` (falling back to the host total when `0`), with `memory_used` set to `0`.
 - Add a `Running bool` field (JSON: `running`) to `types.ContainerMemoryStat`.
 - Keep the existing aggregate `used`/`total` computation scoped to running containers only — do not add stopped containers' (zero) usage to the aggregate.
 - The Kubernetes backend stub continues to return `nil` for `containers`.
@@ -34,7 +34,7 @@ The `containers` array in the `/status` response (added by REQ-109) only include
 
 - [ ] `GET /status` `containers` array includes both running and stopped containers.
 - [ ] Each entry has `name`, `memory_used`, `memory_limit`, and `running` fields.
-- [ ] Stopped container entries report `memory_used: 0` and `memory_limit` equal to their configured Docker memory limit (or `0` if unlimited).
+- [ ] Stopped container entries report `memory_used: 0` and `memory_limit` equal to their configured Docker memory limit, or the host's total memory when no limit is configured.
 - [ ] Running container entries are unaffected (same values as before this change).
 - [ ] Aggregate `memory_used` / `memory_total` values are unchanged (computed from running containers only).
 - [ ] `go build ./...`, `golangci-lint run`, and `go test ./...` pass.
@@ -47,4 +47,4 @@ The `containers` array in the `/status` response (added by REQ-109) only include
 ## Implementation Notes
 
 - `ContainerList(ctx, client.ContainerListOptions{All: true})` returns stopped containers too; use `c.State` (`container.ContainerState`, e.g. `"running"`, `"exited"`, `"created"`) to branch behaviour.
-- `ContainerInspect` returns `result.Container.HostConfig.Memory` (an `int64`, in bytes; `0` means unlimited) — this is the same value Docker reports as the container's configured memory limit, equivalent to what `ContainerStats`'s `MemoryStats.Limit` reflects for running containers.
+- `ContainerInspect` returns `result.Container.HostConfig.Memory` (an `int64`, in bytes; `0` means unlimited). When `0`, fall back to the host's total memory (the same `total` value returned as `memory_total`), mirroring how `ContainerStats`'s `MemoryStats.Limit` naturally reports the host total for unlimited running containers.
