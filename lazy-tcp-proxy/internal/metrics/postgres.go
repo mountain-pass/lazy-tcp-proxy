@@ -94,7 +94,7 @@ const queryHourlyActivity = `
 SELECT container_name, port, is_udp,
        EXTRACT(DOW  FROM rollup_at)::int AS dow,
        EXTRACT(HOUR FROM rollup_at)::int AS hr,
-       SUM(connections_started) + SUM(connections_active) AS conns
+       SUM(connections_peak) AS conns
 FROM proxy_metrics
 WHERE rollup_at >= NOW() - INTERVAL '7 days'
   AND uptime_ms_total > 0
