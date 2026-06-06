@@ -321,7 +321,12 @@ func (a *portAccumulator) rollup(windowEnd time.Time) Snapshot {
 	cStart  := a.containerStarts.Swap(0)
 	cStop   := a.containerStops.Swap(0)
 	active  := a.activeConns.Load() // gauge: not reset
-	peak    := a.peakConns.Swap(0)
+	// Seed the new window's peak with the current active count so long-lived
+	// connections spanning multiple rollup windows are reflected in peak.
+	peak := a.peakConns.Swap(active)
+	if peak < active {
+		peak = active
+	}
 
 	a.mu.Lock()
 
