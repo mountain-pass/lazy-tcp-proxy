@@ -93,7 +93,8 @@ func (db *postgresDB) close() {
 const queryHourlyActivity = `
 SELECT container_name, port, is_udp,
        EXTRACT(DOW  FROM rollup_at)::int AS dow,
-       EXTRACT(HOUR FROM rollup_at)::int AS hr
+       EXTRACT(HOUR FROM rollup_at)::int AS hr,
+       SUM(connections_peak) AS conns
 FROM proxy_metrics
 WHERE rollup_at >= NOW() - INTERVAL '7 days'
   AND uptime_ms_total > 0
@@ -126,8 +127,9 @@ func (db *postgresDB) hourlyActivity(ctx context.Context) ([]ServiceActivity, er
 			isUDP bool
 			dow   int
 			hr    int
+			conns int64
 		)
-		if err := rows.Scan(&name, &port, &isUDP, &dow, &hr); err != nil {
+		if err := rows.Scan(&name, &port, &isUDP, &dow, &hr, &conns); err != nil {
 			return nil, fmt.Errorf("hourlyActivity scan: %w", err)
 		}
 		k := serviceKey{name, port, isUDP}
@@ -138,21 +140,25 @@ func (db *postgresDB) hourlyActivity(ctx context.Context) ([]ServiceActivity, er
 			order = append(order, k)
 		}
 		if hr >= 0 && hr < 24 {
+			val := int8(1)
+			if conns > 0 {
+				val = 2
+			}
 			switch dow {
 			case 0:
-				sa.Sun[hr] = 1
+				sa.Sun[hr] = val
 			case 1:
-				sa.Mon[hr] = 1
+				sa.Mon[hr] = val
 			case 2:
-				sa.Tue[hr] = 1
+				sa.Tue[hr] = val
 			case 3:
-				sa.Wed[hr] = 1
+				sa.Wed[hr] = val
 			case 4:
-				sa.Thu[hr] = 1
+				sa.Thu[hr] = val
 			case 5:
-				sa.Fri[hr] = 1
+				sa.Fri[hr] = val
 			case 6:
-				sa.Sat[hr] = 1
+				sa.Sat[hr] = val
 			}
 			sa.Active = true
 		}
