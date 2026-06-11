@@ -130,7 +130,11 @@ func (m *Manager) Discover(ctx context.Context, handler types.TargetHandler) err
 	for _, c := range containers.Items {
 		info, err := m.containerToTargetInfo(ctx, c.ID)
 		if err != nil {
-			log.Printf("docker: discover: skipping container %s: %v", c.ID[:12], err)
+			containerName := c.ID[:12]
+			if len(c.Names) > 0 {
+				containerName = strings.TrimPrefix(c.Names[0], "/")
+			}
+			log.Printf("docker: discover: skipping container \033[33m%s\033[0m: %v", containerName, err)
 			continue
 		}
 
@@ -180,8 +184,9 @@ func (m *Manager) containerToTargetInfo(ctx context.Context, containerID string)
 		traefikTCPHostSpecs = types.ParseTraefikHostSpecs("lazy-tcp-proxy.traefik-tcp-hosts", v)
 	}
 
-	if !hasPorts && (!hasUDPPorts || udpPortsStr == "") && len(traefikHostSpecs) == 0 && len(traefikTCPHostSpecs) == 0 {
-		return types.TargetInfo{}, fmt.Errorf("missing required label: one of lazy-tcp-proxy.ports, lazy-tcp-proxy.udp-ports, lazy-tcp-proxy.traefik-hosts, lazy-tcp-proxy.traefik-tcp-hosts")
+	hasCronStart := strings.TrimSpace(inspect.Config.Labels["lazy-tcp-proxy.cron-start"]) != ""
+	if !hasPorts && (!hasUDPPorts || udpPortsStr == "") && len(traefikHostSpecs) == 0 && len(traefikTCPHostSpecs) == 0 && !hasCronStart {
+		return types.TargetInfo{}, fmt.Errorf("missing required label: one of lazy-tcp-proxy.ports, lazy-tcp-proxy.udp-ports, lazy-tcp-proxy.traefik-hosts, lazy-tcp-proxy.traefik-tcp-hosts, lazy-tcp-proxy.cron-start")
 	}
 	var ports []types.PortMapping
 	if hasPorts {
