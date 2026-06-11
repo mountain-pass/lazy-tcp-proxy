@@ -1094,8 +1094,9 @@ func (m *Manager) WatchEvents(ctx context.Context, handler types.TargetHandler) 
 					udpPortsVal := attrs["lazy-tcp-proxy.udp-ports"]
 					traefikHostsVal := attrs["lazy-tcp-proxy.traefik-hosts"]
 					traefikTCPHostsVal := attrs["lazy-tcp-proxy.traefik-tcp-hosts"]
-					if !hasPorts && udpPortsVal == "" && traefikHostsVal == "" && traefikTCPHostsVal == "" {
-						log.Printf("docker: event: container %s started but not proxied: missing required label: one of lazy-tcp-proxy.ports, lazy-tcp-proxy.udp-ports, lazy-tcp-proxy.traefik-hosts, lazy-tcp-proxy.traefik-tcp-hosts", name)
+					cronStartVal := attrs["lazy-tcp-proxy.cron-start"]
+					if !hasPorts && udpPortsVal == "" && traefikHostsVal == "" && traefikTCPHostsVal == "" && cronStartVal == "" {
+						log.Printf("docker: event: container %s started but not proxied: missing required label: one of lazy-tcp-proxy.ports, lazy-tcp-proxy.udp-ports, lazy-tcp-proxy.traefik-hosts, lazy-tcp-proxy.traefik-tcp-hosts, lazy-tcp-proxy.cron-start", name)
 						continue
 					}
 					valid := !hasPorts || traefikHostsVal != "" || traefikTCPHostsVal != "" // UDP/traefik-only: skip TCP ports validation

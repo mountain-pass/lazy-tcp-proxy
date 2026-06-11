@@ -268,12 +268,16 @@ func (cw *countingWriter) Write(p []byte) (int, error) {
 func (s *ProxyServer) CronStart(ctx context.Context, targetID, targetName string) {
 	s.mu.RLock()
 	running, found := s.isRunning(targetID)
+	_, isCronOnly := s.cronOnlyTargets[targetID]
 	s.mu.RUnlock()
 	if !found {
 		log.Printf("scheduler: cron-start: \033[33m%s\033[0m not found, skipping", targetName)
 		return
 	}
-	if running {
+	// For cron-only containers (no ports) skip the in-memory running check —
+	// there are no active connections to track state, so it can be stale.
+	// docker start is idempotent if the container is already running.
+	if running && !isCronOnly {
 		log.Printf("scheduler: cron-start: \033[33m%s\033[0m already running, no action", targetName)
 		return
 	}
