@@ -416,7 +416,7 @@ func (s *ProxyServer) Snapshot() []TargetSnapshot {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	now := time.Now()
-	out := make([]TargetSnapshot, 0, len(s.targets)+len(s.udpTargets))
+	out := make([]TargetSnapshot, 0, len(s.targets)+len(s.udpTargets)+len(s.cronOnlyTargets))
 	for listenPort, ts := range s.targets {
 		effective := ts.lastActive
 		if effective.IsZero() {
@@ -475,6 +475,25 @@ func (s *ProxyServer) Snapshot() []TargetSnapshot {
 			IsUDP:              true,
 			HasAuth:            false,
 			Availability:       types.EffectiveAvailability(uls.info),
+			HasComposeFile:     hasCompose,
+			HasTarGz:           hasTar,
+		})
+	}
+	for _, ct := range s.cronOnlyTargets {
+		id := ct.info.ContainerID
+		if len(id) > 12 {
+			id = id[:12]
+		}
+		hasCompose, hasTar := s.composeFlags(ct.info.ContainerName)
+		t := s.startTime
+		out = append(out, TargetSnapshot{
+			ContainerID:        id,
+			ContainerName:      ct.info.ContainerName,
+			Running:            ct.running,
+			ContainerMissing:   ct.info.Missing,
+			LastActive:         &t,
+			LastActiveRelative: relativeTime(t, now),
+			Availability:       types.EffectiveAvailability(ct.info),
 			HasComposeFile:     hasCompose,
 			HasTarGz:           hasTar,
 		})
