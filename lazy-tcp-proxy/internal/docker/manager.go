@@ -111,6 +111,14 @@ func (m *Manager) SelfContainerID() string {
 	return ""
 }
 
+// shortID returns the first 12 characters of id, or the full string if shorter.
+func shortID(id string) string {
+	if len(id) > 12 {
+		return id[:12]
+	}
+	return id
+}
+
 // Discover lists all containers (running or stopped) that have the proxy label,
 // joins their networks, and calls handler.RegisterTarget for each.
 func (m *Manager) Discover(ctx context.Context, handler types.TargetHandler) error {
@@ -130,7 +138,7 @@ func (m *Manager) Discover(ctx context.Context, handler types.TargetHandler) err
 	for _, c := range containers.Items {
 		info, err := m.containerToTargetInfo(ctx, c.ID)
 		if err != nil {
-			containerName := c.ID[:12]
+			containerName := shortID(c.ID)
 			if len(c.Names) > 0 {
 				containerName = strings.TrimPrefix(c.Names[0], "/")
 			}
@@ -345,7 +353,7 @@ func (m *Manager) JoinNetworks(ctx context.Context, networkIDs []string) ([]stri
 			continue
 		}
 
-		log.Printf("docker: joining network \033[32m%s\033[0m (%s)", netInfo.Network.Name, netID[:12])
+		log.Printf("docker: joining network \033[32m%s\033[0m (%s)", netInfo.Network.Name, shortID(netID))
 		if _, err := m.cli.NetworkConnect(ctx, netID, client.NetworkConnectOptions{Container: m.selfID}); err != nil {
 			if !strings.Contains(err.Error(), "already exists") {
 				log.Printf("docker: failed to join network \033[32m%s\033[0m: %v", netInfo.Network.Name, err)
@@ -584,7 +592,7 @@ func (m *Manager) GetUpstreamHost(ctx context.Context, targetID, preferNetworkID
 		}
 	}
 
-	return "", fmt.Errorf("no IP address found for container %s", targetID[:12])
+	return "", fmt.Errorf("no IP address found for container %s", shortID(targetID))
 }
 
 // isSwarmService reports whether targetID is a registered swarm service.
