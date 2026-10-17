@@ -118,3 +118,4 @@
 | REQ-114 | Cron-Only Container Discovery (no port labels required)                     | Medium | Completed   | 2026-06-11 | [2026-06-11-cron-only-container-discovery.md](2026-06-11-cron-only-container-discovery.md) |
 | REQ-115 | Self-Contained Postgres SSL Recipe                                        | Medium | Completed     | 2026-10-16 | [2026-10-16-self-contained-postgres-ssl-recipe.md](2026-10-16-self-contained-postgres-ssl-recipe.md) |
 | REQ-116 | Traefik TLS ALPN Protocols via Container Label                            | Medium | Completed     | 2026-10-17 | [2026-10-17-traefik-tls-alpn-protocols-label.md](2026-10-17-traefik-tls-alpn-protocols-label.md) |
+| REQ-117 | Fix: Omit Empty `http` Section from `/traefik` Payload                    | High   | Completed     | 2026-10-17 | [2026-10-17-fix-traefik-empty-http-section.md](2026-10-17-fix-traefik-empty-http-section.md) |

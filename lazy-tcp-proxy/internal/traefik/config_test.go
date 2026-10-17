@@ -600,3 +600,57 @@ func TestBuildConfig_TLSOptions_Deterministic(t *testing.T) {
 		t.Errorf("output differs:\n%s\n%s", a, b)
 	}
 }
+
+func TestBuildConfig_TCPOnly_OmitsEmptyHTTPSection(t *testing.T) {
+	snaps := []Snapshot{{ListenPort: 8000, TraefikTCPHosts: []string{"pg.example.com:8000"}}}
+	cfg := BuildConfig(snaps, "lazy-tcp-proxy", "websecure", "myresolver", "", 0, nil)
+
+	b, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(b, &raw); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := raw["http"]; ok {
+		t.Errorf("expected no http key for TCP-only config, got %s", b)
+	}
+	if _, ok := raw["tcp"]; !ok {
+		t.Errorf("expected tcp key, got %s", b)
+	}
+}
+
+func TestBuildConfig_NoTargets_EmptyObject(t *testing.T) {
+	b, err := json.Marshal(BuildConfig(nil, "lazy-tcp-proxy", "websecure", "myresolver", "", 0, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != "{}" {
+		t.Errorf("expected {}, got %s", b)
+	}
+}
+
+func TestBuildConfig_HTTPHost_KeepsHTTPSection(t *testing.T) {
+	snaps := []Snapshot{{ListenPort: 9001, TraefikHosts: []string{"whoami.localhost:9001"}}}
+	b, _ := json.Marshal(BuildConfig(snaps, "lazy-tcp-proxy", "", "", "", 0, nil))
+	var got struct {
+		HTTP struct {
+			Routers  map[string]json.RawMessage `json:"routers"`
+			Services map[string]json.RawMessage `json:"services"`
+		} `json:"http"`
+	}
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.HTTP.Routers) != 1 || len(got.HTTP.Services) != 1 {
+		t.Errorf("expected 1 router and 1 service, got %s", b)
+	}
+}
+
+func TestBuildConfig_WebHostOnly_KeepsHTTPSection(t *testing.T) {
+	b, _ := json.Marshal(BuildConfig(nil, "lazy-tcp-proxy", "websecure", "myresolver", "dash.example.com", 8080, nil))
+	if !strings.Contains(string(b), `"http"`) || !strings.Contains(string(b), "dash-example-com-8080-router") {
+		t.Errorf("expected http section with web router, got %s", b)
+	}
+}

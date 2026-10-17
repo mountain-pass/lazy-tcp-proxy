@@ -153,4 +153,4 @@ This also confirmed that a router can reference a named option from the same HTT
 
 ### Pre-existing issue found (not changed here)
 
-When there are no HTTP routers, `BuildConfig` still emits `"http": {"routers": {}, "services": {}}`. Traefik v3.1 rejects the whole payload with `routers cannot be a standalone element` (reproduced both with and without the new `tls` section). Setups that also have an HTTP route (e.g. `WEB_HOST`) are unaffected, but a TCP-only setup would be. This should be its own requirement (e.g. omit the `http` key when it has no routers/services).
+When there are no HTTP routers, `BuildConfig` still emits `"http": {"routers": {}, "services": {}}`. Traefik v3.1 rejects the whole payload with `routers cannot be a standalone element` (reproduced both with and without the new `tls` section). Setups that also have an HTTP route (e.g. `WEB_HOST`) are unaffected, but a TCP-only setup would be. Fixed separately as [REQ-117](2026-10-17-fix-traefik-empty-http-section.md).

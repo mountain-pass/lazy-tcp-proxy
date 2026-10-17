@@ -20,7 +20,7 @@ type Snapshot struct {
 
 // TraefikConfig is the top-level Traefik HTTP provider dynamic config payload.
 type TraefikConfig struct {
-	HTTP HTTPConfig `json:"http"`
+	HTTP HTTPConfig `json:"http,omitzero"`
 	TCP  *TCPConfig `json:"tcp,omitempty"`
 	TLS  *TLSConfig `json:"tls,omitempty"`
 }
@@ -38,9 +38,16 @@ type TLSOption struct {
 
 // HTTPConfig holds the routers and services sections of the HTTP provider payload.
 type HTTPConfig struct {
-	Routers           map[string]HTTPRouter           `json:"routers"`
-	Services          map[string]HTTPService          `json:"services"`
+	Routers           map[string]HTTPRouter           `json:"routers,omitempty"`
+	Services          map[string]HTTPService          `json:"services,omitempty"`
 	ServersTransports map[string]ServersTransport     `json:"serversTransports,omitempty"`
+}
+
+// IsZero reports whether the HTTP section has nothing to emit. It is used by the
+// encoding/json omitzero option: Traefik rejects the whole payload ("routers cannot
+// be a standalone element") when it receives empty http routers/services maps.
+func (c HTTPConfig) IsZero() bool {
+	return len(c.Routers) == 0 && len(c.Services) == 0 && len(c.ServersTransports) == 0
 }
 
 // ServersTransport holds timeout configuration for upstream connections.
