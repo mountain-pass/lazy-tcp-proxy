@@ -1,3 +1,28 @@
+# PostgreSQL behind lazy-tcp-proxy.
+#
+# --- Optional: expose over TLS via Traefik (PostgreSQL 17+ direct TLS) -------------------
+# Traefik terminates TLS and forwards plain TCP, so Postgres itself needs no certificates.
+# Replace the lazy-tcp-proxy.ports label below with these (requires the lazy-tcp-proxy
+# /traefik endpoint to be configured as a Traefik HTTP provider; see README_LABELS.md):
+#
+#   - "lazy-tcp-proxy.traefik-tcp-hosts=postgres.example.com:5432"
+#   - "lazy-tcp-proxy.alpn-protocols=postgresql"   # lets Traefik accept Postgres direct TLS
+#   - "lazy-tcp-proxy.min-version=1.3"             # optional: require TLS 1.3 for this host
+#
+# Connect by HOSTNAME (not IP), with a libpq 17+ client:
+#
+#   psql "host=postgres.example.com port=443 sslmode=verify-full sslrootcert=system sslnegotiation=direct"
+#
+# If you get "certificate verify failed" (common with the libpq bundled in pgAdmin on macOS,
+# where sslrootcert=system finds no CA store), point at an explicit root CA file instead.
+# For Let's Encrypt certificates the chain anchors at ISRG Root X1:
+#
+#   mkdir -p ~/.postgresql
+#   curl -o ~/.postgresql/root.crt https://letsencrypt.org/certs/isrgrootx1.pem
+#
+# then use sslrootcert=$HOME/.postgresql/root.crt (pgAdmin: Parameters > Root CA certificate).
+# pgAdmin also needs the sslnegotiation=direct parameter and a bundled libpq 17 or newer.
+# -------------------------------------------------------------------------------------------
 name: postgres
 
 services:
