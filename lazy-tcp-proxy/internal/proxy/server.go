@@ -57,6 +57,8 @@ type TargetSnapshot struct {
 	Availability       string     `json:"availability"`
 	HasComposeFile     bool       `json:"has_compose_file"`
 	HasTarGz           bool       `json:"has_tar_gz"`
+	ALPNProtocols      []string   `json:"alpn_protocols,omitempty"`
+	MinTLSVersion      string     `json:"min_tls_version,omitempty"`
 }
 
 // relativeTime returns a human-readable string describing how long ago t was,
@@ -444,6 +446,8 @@ func (s *ProxyServer) Snapshot() []TargetSnapshot {
 			LastActiveRelative: relativeTime(effective, now),
 			TraefikHosts:       ts.info.TraefikHosts,
 			TraefikTCPHosts:    ts.info.TraefikTCPHosts,
+			ALPNProtocols:      ts.info.ALPNProtocols,
+			MinTLSVersion:      ts.info.MinTLSVersion,
 			IsUDP:              false,
 			HasAuth:            len(ts.apiKey) > 0 || len(ts.basicAuth) > 0,
 			Availability:       types.EffectiveAvailability(ts.info),
@@ -476,6 +480,8 @@ func (s *ProxyServer) Snapshot() []TargetSnapshot {
 			LastActiveRelative: relativeTime(lastAct, now),
 			TraefikHosts:       uls.info.TraefikHosts,
 			TraefikTCPHosts:    uls.info.TraefikTCPHosts,
+			ALPNProtocols:      uls.info.ALPNProtocols,
+			MinTLSVersion:      uls.info.MinTLSVersion,
 			IsUDP:              true,
 			HasAuth:            false,
 			Availability:       types.EffectiveAvailability(uls.info),
@@ -772,7 +778,9 @@ func targetInfoEqual(a, b types.TargetInfo) bool {
 		reflect.DeepEqual(a.APIKey, b.APIKey) &&
 		reflect.DeepEqual(a.BasicAuth, b.BasicAuth) &&
 		reflect.DeepEqual(a.TraefikHosts, b.TraefikHosts) &&
-		reflect.DeepEqual(a.TraefikTCPHosts, b.TraefikTCPHosts)
+		reflect.DeepEqual(a.TraefikTCPHosts, b.TraefikTCPHosts) &&
+		reflect.DeepEqual(a.ALPNProtocols, b.ALPNProtocols) &&
+		a.MinTLSVersion == b.MinTLSVersion
 }
 
 // Update reconciles the proxy's registered targets with newTargets.

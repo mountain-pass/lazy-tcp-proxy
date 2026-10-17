@@ -1,6 +1,7 @@
 package types
 
 import (
+	"reflect"
 	"net"
 	"testing"
 	"time"
@@ -468,5 +469,40 @@ func TestParseTraefikHostSpecs_WhitespaceAround(t *testing.T) {
 	}
 	if got[0].Domain != "myapp.local" || got[0].TargetPort != 8080 {
 		t.Errorf("spec 0: got %+v", got[0])
+	}
+}
+
+func TestParseALPNProtocols(t *testing.T) {
+	tests := []struct {
+		name string
+		in   []string
+		want []string
+	}{
+		{"basic", []string{"h2,postgresql"}, []string{"h2", "postgresql"}},
+		{"normalise", []string{" postgresql , ,postgresql"}, []string{"postgresql"}},
+		{"empty", []string{""}, nil},
+		{"none", nil, nil},
+		{"case kept", []string{"PostgreSQL"}, []string{"PostgreSQL"}},
+		{"multiple args deduped", []string{"a,b", "b,c"}, []string{"a", "b", "c"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ParseALPNProtocols(tc.in...)
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("got %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestParseMinTLSVersion(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"1.0", "1.0"}, {"1.1", "1.1"}, {"1.2", "1.2"}, {" 1.3 ", "1.3"},
+		{"", ""}, {"tls13", ""}, {"1.4", ""},
+	}
+	for _, tc := range tests {
+		if got := ParseMinTLSVersion("c", tc.in); got != tc.want {
+			t.Errorf("ParseMinTLSVersion(%q) = %q, want %q", tc.in, got, tc.want)
+		}
 	}
 }

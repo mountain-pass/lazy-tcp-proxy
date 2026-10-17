@@ -403,3 +403,27 @@ func TestWatchEvents_ModifiedStillRunningDoesNotCallContainerStopped(t *testing.
 func init() {
 	_ = schema.GroupVersionResource{Group: "autoscaling", Version: "v1", Resource: "scales"}
 }
+
+func TestDiscover_TLSAnnotations(t *testing.T) {
+	d := fakeDeployment("default", "pg", 1, map[string]string{
+		"lazy-tcp-proxy.traefik-tcp-hosts": "pg.example.com:5432",
+		"lazy-tcp-proxy.alpn-protocols":    " postgresql, postgresql ",
+		"lazy-tcp-proxy.min-version":       "1.3",
+	})
+	fc := k8sfake.NewSimpleClientset(d)
+	b := newBackendWithClient(fc, "default")
+	h := &captureHandler{}
+	if err := b.Discover(context.Background(), h); err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if len(h.registered) != 1 {
+		t.Fatalf("expected 1 registration, got %d", len(h.registered))
+	}
+	info := h.registered[0]
+	if len(info.ALPNProtocols) != 1 || info.ALPNProtocols[0] != "postgresql" {
+		t.Errorf("ALPNProtocols: got %v, want [postgresql]", info.ALPNProtocols)
+	}
+	if info.MinTLSVersion != "1.3" {
+		t.Errorf("MinTLSVersion: got %q, want 1.3", info.MinTLSVersion)
+	}
+}

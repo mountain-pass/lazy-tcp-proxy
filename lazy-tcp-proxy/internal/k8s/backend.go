@@ -391,6 +391,8 @@ func (b *Backend) deploymentToTargetInfo(d appsv1.Deployment) (types.TargetInfo,
 		TraefikHosts:    traefikHosts,
 		TraefikTCPHosts: traefikTCPHosts,
 		Availability:    availability,
+		ALPNProtocols:   types.ParseALPNProtocols(ann["lazy-tcp-proxy.alpn-protocols"]),
+		MinTLSVersion:   types.ParseMinTLSVersion(d.Name, ann["lazy-tcp-proxy.min-version"]),
 	}, nil
 }
 

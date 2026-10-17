@@ -1538,3 +1538,19 @@ func TestHandleHTTPProxy_BasicAuth_HeaderStripped(t *testing.T) {
 func newBufReader(c net.Conn) *bufio.Reader {
 	return bufio.NewReader(c)
 }
+
+func TestTargetInfoEqual_ALPNProtocolsDiffer(t *testing.T) {
+	a := types.TargetInfo{Ports: []types.PortMapping{{ListenPort: 9000, TargetPort: 80}}, ALPNProtocols: []string{"postgresql"}}
+	b := types.TargetInfo{Ports: []types.PortMapping{{ListenPort: 9000, TargetPort: 80}}}
+	if targetInfoEqual(a, b) {
+		t.Error("expected not equal when ALPNProtocols differs")
+	}
+}
+
+func TestTargetInfoEqual_MinTLSVersionDiffers(t *testing.T) {
+	a := types.TargetInfo{Ports: []types.PortMapping{{ListenPort: 9000, TargetPort: 80}}, MinTLSVersion: "1.3"}
+	b := types.TargetInfo{Ports: []types.PortMapping{{ListenPort: 9000, TargetPort: 80}}, MinTLSVersion: "1.2"}
+	if targetInfoEqual(a, b) {
+		t.Error("expected not equal when MinTLSVersion differs")
+	}
+}
