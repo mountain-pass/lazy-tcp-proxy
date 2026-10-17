@@ -22,6 +22,17 @@
 #
 # then use sslrootcert=$HOME/.postgresql/root.crt (pgAdmin: Parameters > Root CA certificate).
 # pgAdmin also needs the sslnegotiation=direct parameter and a bundled libpq 17 or newer.
+#
+# Node.js (node-postgres / drizzle): needs pg 8.22.0 or newer (earlier versions have no
+# direct TLS support). The default negotiation is the traditional SSLRequest, which Traefik
+# cannot terminate, so sslnegotiation=direct is required in the connection string:
+#
+#   DATABASE_URL=postgres://user:password@postgres.example.com:443/dbname?sslmode=verify-full&sslnegotiation=direct
+#
+# If Node reports UNABLE_TO_GET_ISSUER_CERT_LOCALLY, trust the root CA downloaded above, either
+# by appending &sslrootcert=/path/to/root.crt to the URL, or by running node with
+# NODE_EXTRA_CA_CERTS=$HOME/.postgresql/root.crt (Node does not use the macOS Keychain or
+# ~/.postgresql/root.crt on its own).
 # -------------------------------------------------------------------------------------------
 name: postgres
 
