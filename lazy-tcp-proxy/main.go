@@ -310,6 +310,8 @@ func runStatusServer(ctx context.Context, srv *proxy.ProxyServer, mgr backendMan
 				ListenPort:      s.ListenPort,
 				TraefikHosts:    s.TraefikHosts,
 				TraefikTCPHosts: s.TraefikTCPHosts,
+				ALPNProtocols:   s.ALPNProtocols,
+				MinTLSVersion:   s.MinTLSVersion,
 			}
 		}
 		w.Header().Set("Content-Type", "application/json")

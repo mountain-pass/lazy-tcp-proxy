@@ -33,6 +33,8 @@ Add these labels to any container you want proxied/managed:
 | `lazy-tcp-proxy.basic-auth` | No | Comma-separated list of `user:hashedpassword` credentials in htpasswd bcrypt format. Any matching credential is accepted via `Authorization: Basic`. Missing or incorrect credentials → `401 Unauthorized` with `WWW-Authenticate`. The header is stripped before forwarding (see [Basic Auth Authentication](#basic-auth-authentication)) |
 | `lazy-tcp-proxy.traefik-hosts` | No | Comma-separated `<domain>:<target_port>` pairs — lazy-tcp-proxy auto-assigns a listen port (starting from `LISTEN_START_PORT`) and exposes the mapping via `GET /traefik` for Traefik's HTTP provider (see [Traefik Integration](#traefik-integration)) |
 | `lazy-tcp-proxy.traefik-tcp-hosts` | No | Comma-separated `<domain>:<target_port>` pairs — lazy-tcp-proxy auto-assigns a listen port and generates Traefik TCP SNI routers on the `websecure` entrypoint (see [TCP SNI routing](#tcp-sni-routing-traefik-tcp-hosts)) |
+| `lazy-tcp-proxy.alpn-protocols` | No | Comma-separated extra TLS ALPN protocols (e.g. `postgresql`) accepted on this service's Traefik routers. Needed for PostgreSQL 17+ direct TLS (see [Per-service TLS options](#per-service-tls-options-alpn-protocols-min-version)) |
+| `lazy-tcp-proxy.min-version` | No | Minimum TLS version (`1.0`, `1.1`, `1.2` or `1.3`) enforced on this service's Traefik routers (see [Per-service TLS options](#per-service-tls-options-alpn-protocols-min-version)) |
 
 \* At least one of `lazy-tcp-proxy.ports`, `lazy-tcp-proxy.udp-ports`, `lazy-tcp-proxy.traefik-hosts`, or `lazy-tcp-proxy.traefik-tcp-hosts` must be set.
 
@@ -746,8 +748,8 @@ mongosh "mongodb://mongo.example.com:443/?tls=true"
 # Redis
 redis-cli -h redis.example.com -p 443 --tls
 
-# PostgreSQL
-psql "host=pg.example.com port=443 sslmode=require"
+# PostgreSQL (17+ client; needs direct TLS and the alpn-protocols label — see below)
+psql "host=pg.example.com port=443 sslmode=require sslnegotiation=direct"
 ```
 
 A service can have **both** `traefik-hosts` (HTTP) and `traefik-tcp-hosts` (TCP SNI) at the same
@@ -755,6 +757,79 @@ time — they are placed in separate `http` and `tcp` sections of the Traefik co
 collision.
 
 The `tcp` key is absent from the `/traefik` response when no service has `traefik-tcp-hosts` set.
+
+### Per-service TLS options (`alpn-protocols`, `min-version`)
+
+Traefik's default TLS options only advertise the ALPN protocols `h2`, `http/1.1` and `acme-tls/1`,
+and allow any TLS version its static config permits. Two optional labels (Kubernetes annotations and
+config-store keys `alpn_protocols` / `min_version` work the same way) tune this **for one service
+only**:
+
+| Label | Example | Effect |
+|-------|---------|--------|
+| `lazy-tcp-proxy.alpn-protocols` | `postgresql` | Adds these ALPN protocols. Comma-separated; whitespace and duplicates are ignored; names are case-sensitive |
+| `lazy-tcp-proxy.min-version` | `1.3` | Minimum TLS version: `1.0`, `1.1`, `1.2` or `1.3`. Invalid values are logged and ignored |
+
+```yaml
+labels:
+  - "lazy-tcp-proxy.enabled=true"
+  - "lazy-tcp-proxy.traefik-tcp-hosts=pg.example.com:5432"
+  - "lazy-tcp-proxy.alpn-protocols=postgresql"
+  - "lazy-tcp-proxy.min-version=1.3"
+```
+
+For each service that sets either label, `/traefik` gains a named TLS option and only that service's
+routers (both `traefik-hosts` and `traefik-tcp-hosts`) reference it. Services with identical settings
+share one option. When the ALPN label adds anything, the emitted `alpnProtocols` list is Traefik's
+defaults followed by your extras, so HTTP/2 and ACME keep working on those hosts.
+
+```json
+{
+  "tcp": {
+    "routers": {
+      "pg-example-com-5432-router": {
+        "entryPoints": ["websecure"],
+        "rule": "HostSNI(`pg.example.com`)",
+        "service": "pg-example-com-5432-service",
+        "tls": { "certResolver": "myresolver", "options": "lazy-tls-alpn-postgresql-min-1-3" }
+      }
+    }
+  },
+  "tls": {
+    "options": {
+      "lazy-tls-alpn-postgresql-min-1-3": {
+        "alpnProtocols": ["h2", "http/1.1", "acme-tls/1", "postgresql"],
+        "minVersion": "VersionTLS13"
+      }
+    }
+  }
+}
+```
+
+With neither label set anywhere, the `tls` key and router `options` are absent and the response is
+unchanged.
+
+**PostgreSQL through Traefik.** A normal Postgres client sends a plaintext `SSLRequest` first, which
+Traefik cannot terminate or route. PostgreSQL 17+ clients (libpq 17) can start TLS immediately with
+`sslnegotiation=direct`, offering ALPN `postgresql`; that is what the `alpn-protocols=postgresql`
+label enables:
+
+```bash
+psql "host=pg.example.com port=443 sslmode=verify-full sslrootcert=system sslnegotiation=direct"
+```
+
+Notes:
+
+- Traefik picks TLS options from the **SNI hostname**. Connect by hostname, not bare IP: a client
+  connecting to an IP sends no SNI and gets Traefik's `default` options, so these labels do not apply.
+  (`hostaddr=<ip>` keeps the hostname for SNI and verification.)
+- Services are expected not to share hostnames. Two routers on the same host with different options
+  make Traefik report a conflict.
+- The labels only matter on services that have `traefik-hosts` or `traefik-tcp-hosts`; elsewhere they
+  are accepted and ignored.
+- No `default` option is emitted, so this does not conflict with your own `tls.options.default`.
+- A router with `options` but no `certResolver` (`TRAEFIK_CERTRESOLVER=""`) uses Traefik's default or
+  static certificates for that host.
 
 ### Protocol support
 

@@ -2,6 +2,8 @@ package traefik
 
 import (
 	"encoding/json"
+	"slices"
+	"strings"
 	"testing"
 )
 
@@ -430,4 +432,171 @@ func jsonContains(data []byte, s string) bool {
 		}
 	}
 	return false
+}
+
+func TestBuildConfig_TLSOptions_NoSettings(t *testing.T) {
+	snaps := []Snapshot{{ListenPort: 8000, TraefikTCPHosts: []string{"pg.example.com:8000"}}}
+	cfg := BuildConfig(snaps, "lazy-tcp-proxy", "websecure", "myresolver", "", 0, nil)
+
+	if cfg.TLS != nil {
+		t.Errorf("expected no tls section, got %+v", cfg.TLS)
+	}
+	if got := cfg.TCP.Routers["pg-example-com-8000-router"].TLS.Options; got != "" {
+		t.Errorf("expected no router options, got %q", got)
+	}
+	b, _ := json.Marshal(cfg)
+	if strings.Contains(string(b), `"tls":{"options"`) || strings.Contains(string(b), `"options"`) {
+		t.Errorf("payload should not mention options: %s", b)
+	}
+}
+
+func TestBuildConfig_TLSOptions_SingleALPN(t *testing.T) {
+	snaps := []Snapshot{{ListenPort: 8000, TraefikTCPHosts: []string{"pg.example.com:8000"}, ALPNProtocols: []string{"postgresql"}}}
+	cfg := BuildConfig(snaps, "lazy-tcp-proxy", "websecure", "myresolver", "", 0, nil)
+
+	opt, ok := cfg.TLS.Options["lazy-tls-alpn-postgresql"]
+	if !ok {
+		t.Fatalf("option not found: %+v", cfg.TLS)
+	}
+	want := []string{"h2", "http/1.1", "acme-tls/1", "postgresql"}
+	if !slices.Equal(opt.AlpnProtocols, want) {
+		t.Errorf("alpn = %v, want %v", opt.AlpnProtocols, want)
+	}
+	if opt.MinVersion != "" {
+		t.Errorf("unexpected minVersion %q", opt.MinVersion)
+	}
+	r := cfg.TCP.Routers["pg-example-com-8000-router"]
+	if r.TLS.Options != "lazy-tls-alpn-postgresql" || r.TLS.CertResolver != "myresolver" {
+		t.Errorf("unexpected router tls: %+v", r.TLS)
+	}
+}
+
+func TestBuildConfig_TLSOptions_ScopedToLabelledService(t *testing.T) {
+	snaps := []Snapshot{
+		{ListenPort: 8000, TraefikTCPHosts: []string{"pg.example.com:8000"}, ALPNProtocols: []string{"postgresql"}},
+		{ListenPort: 8007, TraefikTCPHosts: []string{"mongo.example.com:8007"}},
+	}
+	cfg := BuildConfig(snaps, "lazy-tcp-proxy", "websecure", "myresolver", "", 0, nil)
+
+	if _, ok := cfg.TLS.Options["default"]; ok {
+		t.Error("must not emit a default option")
+	}
+	if got := cfg.TCP.Routers["mongo-example-com-8007-router"].TLS.Options; got != "" {
+		t.Errorf("unlabelled router should have no options, got %q", got)
+	}
+	if got := cfg.TCP.Routers["pg-example-com-8000-router"].TLS.Options; got == "" {
+		t.Error("labelled router should reference its option")
+	}
+}
+
+func TestBuildConfig_TLSOptions_SharedAndDistinct(t *testing.T) {
+	snaps := []Snapshot{
+		{ListenPort: 8000, TraefikTCPHosts: []string{"a.example.com:8000"}, MinTLSVersion: "1.3"},
+		{ListenPort: 8001, TraefikTCPHosts: []string{"b.example.com:8001"}, MinTLSVersion: "1.3"},
+		{ListenPort: 8002, TraefikTCPHosts: []string{"c.example.com:8002"}, MinTLSVersion: "1.2"},
+	}
+	cfg := BuildConfig(snaps, "lazy-tcp-proxy", "websecure", "", "", 0, nil)
+
+	if len(cfg.TLS.Options) != 2 {
+		t.Fatalf("expected 2 options, got %+v", cfg.TLS.Options)
+	}
+	if cfg.TLS.Options["lazy-tls-min-1-3"].MinVersion != "VersionTLS13" || cfg.TLS.Options["lazy-tls-min-1-2"].MinVersion != "VersionTLS12" {
+		t.Errorf("unexpected options: %+v", cfg.TLS.Options)
+	}
+	if cfg.TLS.Options["lazy-tls-min-1-3"].AlpnProtocols != nil {
+		t.Error("alpnProtocols should be omitted for min-version only")
+	}
+	if cfg.TCP.Routers["a-example-com-8000-router"].TLS.Options != "lazy-tls-min-1-3" ||
+		cfg.TCP.Routers["b-example-com-8001-router"].TLS.Options != "lazy-tls-min-1-3" ||
+		cfg.TCP.Routers["c-example-com-8002-router"].TLS.Options != "lazy-tls-min-1-2" {
+		t.Errorf("unexpected router options: %+v", cfg.TCP.Routers)
+	}
+}
+
+func TestBuildConfig_TLSOptions_OnlyDefaultsIsNoOp(t *testing.T) {
+	snaps := []Snapshot{{ListenPort: 8000, TraefikTCPHosts: []string{"pg.example.com:8000"}, ALPNProtocols: []string{"h2", "http/1.1"}}}
+	cfg := BuildConfig(snaps, "lazy-tcp-proxy", "websecure", "myresolver", "", 0, nil)
+	if cfg.TLS != nil {
+		t.Errorf("expected no tls section, got %+v", cfg.TLS)
+	}
+}
+
+func TestBuildConfig_TLSOptions_ALPNAndMinVersion(t *testing.T) {
+	snaps := []Snapshot{{ListenPort: 8000, TraefikTCPHosts: []string{"pg.example.com:8000"}, ALPNProtocols: []string{"postgresql", "postgresql", "h2"}, MinTLSVersion: "1.3"}}
+	cfg := BuildConfig(snaps, "lazy-tcp-proxy", "websecure", "myresolver", "", 0, nil)
+
+	opt, ok := cfg.TLS.Options["lazy-tls-alpn-postgresql-min-1-3"]
+	if !ok {
+		t.Fatalf("option not found: %+v", cfg.TLS.Options)
+	}
+	if !slices.Equal(opt.AlpnProtocols, []string{"h2", "http/1.1", "acme-tls/1", "postgresql"}) || opt.MinVersion != "VersionTLS13" {
+		t.Errorf("unexpected option: %+v", opt)
+	}
+}
+
+func TestBuildConfig_TLSOptions_HTTPAndTCP(t *testing.T) {
+	snaps := []Snapshot{{
+		ListenPort:      8000,
+		TraefikHosts:    []string{"web.example.com:8000"},
+		TraefikTCPHosts: []string{"pg.example.com:8000"},
+		ALPNProtocols:   []string{"postgresql"},
+	}}
+	cfg := BuildConfig(snaps, "lazy-tcp-proxy", "websecure", "myresolver", "", 0, nil)
+
+	if got := cfg.HTTP.Routers["web-example-com-8000-router"].TLS.Options; got != "lazy-tls-alpn-postgresql" {
+		t.Errorf("http router options = %q", got)
+	}
+	if got := cfg.TCP.Routers["pg-example-com-8000-router"].TLS.Options; got != "lazy-tls-alpn-postgresql" {
+		t.Errorf("tcp router options = %q", got)
+	}
+}
+
+func TestBuildConfig_TLSOptions_NoCertResolver(t *testing.T) {
+	snaps := []Snapshot{{ListenPort: 8000, TraefikTCPHosts: []string{"pg.example.com:8000"}, ALPNProtocols: []string{"postgresql"}}}
+	cfg := BuildConfig(snaps, "lazy-tcp-proxy", "websecure", "", "", 0, nil)
+
+	tls := cfg.TCP.Routers["pg-example-com-8000-router"].TLS
+	if tls == nil || tls.Options != "lazy-tls-alpn-postgresql" || tls.CertResolver != "" {
+		t.Errorf("unexpected router tls: %+v", tls)
+	}
+}
+
+func TestBuildConfig_TLSOptions_WebHostRouterUnaffected(t *testing.T) {
+	snaps := []Snapshot{{ListenPort: 8000, TraefikTCPHosts: []string{"pg.example.com:8000"}, ALPNProtocols: []string{"postgresql"}}}
+	cfg := BuildConfig(snaps, "lazy-tcp-proxy", "websecure", "myresolver", "dash.example.com", 8080, nil)
+
+	r := cfg.HTTP.Routers["dash-example-com-8080-router"]
+	if r.TLS == nil || r.TLS.Options != "" {
+		t.Errorf("web router should have no options: %+v", r.TLS)
+	}
+}
+
+func TestBuildConfig_TLSOptions_NameCollision(t *testing.T) {
+	snaps := []Snapshot{
+		{ListenPort: 8000, TraefikTCPHosts: []string{"a.example.com:8000"}, ALPNProtocols: []string{"x/y"}},
+		{ListenPort: 8001, TraefikTCPHosts: []string{"b.example.com:8001"}, ALPNProtocols: []string{"x-y"}},
+	}
+	cfg := BuildConfig(snaps, "lazy-tcp-proxy", "websecure", "", "", 0, nil)
+
+	if len(cfg.TLS.Options) != 2 {
+		t.Fatalf("expected 2 distinct options, got %+v", cfg.TLS.Options)
+	}
+	a := cfg.TCP.Routers["a-example-com-8000-router"].TLS.Options
+	b := cfg.TCP.Routers["b-example-com-8001-router"].TLS.Options
+	if a == b || !slices.Contains(cfg.TLS.Options[a].AlpnProtocols, "x/y") || !slices.Contains(cfg.TLS.Options[b].AlpnProtocols, "x-y") {
+		t.Errorf("routers reference wrong options: %q %q in %+v", a, b, cfg.TLS.Options)
+	}
+}
+
+func TestBuildConfig_TLSOptions_Deterministic(t *testing.T) {
+	snaps := []Snapshot{
+		{ListenPort: 8000, TraefikTCPHosts: []string{"a.example.com:8000"}, ALPNProtocols: []string{"postgresql"}, MinTLSVersion: "1.3"},
+		{ListenPort: 8001, TraefikTCPHosts: []string{"b.example.com:8001"}, ALPNProtocols: []string{"custom"}},
+	}
+	rev := []Snapshot{snaps[1], snaps[0]}
+	a, _ := json.Marshal(BuildConfig(snaps, "p", "websecure", "r", "", 0, nil))
+	b, _ := json.Marshal(BuildConfig(rev, "p", "websecure", "r", "", 0, nil))
+	if string(a) != string(b) {
+		t.Errorf("output differs:\n%s\n%s", a, b)
+	}
 }

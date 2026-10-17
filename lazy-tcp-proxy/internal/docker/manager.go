@@ -246,6 +246,8 @@ func (m *Manager) containerToTargetInfo(ctx context.Context, containerID string)
 	cronStart := parseCronLabel(name, "lazy-tcp-proxy.cron-start", inspect.Config.Labels["lazy-tcp-proxy.cron-start"])
 	cronStop := parseCronLabel(name, "lazy-tcp-proxy.cron-stop", inspect.Config.Labels["lazy-tcp-proxy.cron-stop"])
 	availability := types.ParseAvailabilityLabel(name, inspect.Config.Labels["lazy-tcp-proxy.availability"])
+	alpnProtocols := types.ParseALPNProtocols(inspect.Config.Labels["lazy-tcp-proxy.alpn-protocols"])
+	minTLSVersion := types.ParseMinTLSVersion(name, inspect.Config.Labels["lazy-tcp-proxy.min-version"])
 
 	httpHealthCheck := types.ParseHTTPHealthCheckLabel(name, inspect.Config.Labels["lazy-tcp-proxy.http-healthcheck"])
 	if httpHealthCheck != "" {
@@ -309,6 +311,8 @@ func (m *Manager) containerToTargetInfo(ctx context.Context, containerID string)
 		TraefikHosts:    traefikHosts,
 		TraefikTCPHosts: traefikTCPHosts,
 		Availability:    availability,
+		ALPNProtocols:   alpnProtocols,
+		MinTLSVersion:   minTLSVersion,
 	}, nil
 }
 
@@ -877,6 +881,8 @@ func (m *Manager) serviceToTargetInfo(svc swarm.Service) (types.TargetInfo, erro
 		DesiredReplicas: scale,
 		TraefikHosts:    traefikHosts,
 		TraefikTCPHosts: traefikTCPHosts,
+		ALPNProtocols:   types.ParseALPNProtocols(labels["lazy-tcp-proxy.alpn-protocols"]),
+		MinTLSVersion:   types.ParseMinTLSVersion(name, labels["lazy-tcp-proxy.min-version"]),
 	}, nil
 }
 

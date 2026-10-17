@@ -48,6 +48,8 @@ type TargetInfo struct {
 	TraefikHosts    []string       // e.g. ["whoami.localhost:9001"] — domain:listen_port pairs for Traefik HTTP provider
 	TraefikTCPHosts []string       // e.g. ["mongo.example.com:27015"] — domain:listen_port pairs for Traefik TCP SNI provider
 	Availability    string         // "", "ondemand", "cron", or "manual"; "" means derived
+	ALPNProtocols   []string       // extra TLS ALPN protocols for this target's Traefik routers, e.g. ["postgresql"]
+	MinTLSVersion   string         // "", "1.0", "1.1", "1.2", or "1.3" — minimum TLS version for this target's Traefik routers
 }
 
 // EffectiveAvailability resolves the active lifecycle management mode.
@@ -74,6 +76,39 @@ func ParseAvailabilityLabel(name, raw string) string {
 		return v
 	default:
 		log.Printf("container %s: ignoring invalid availability %q (must be ondemand, cron, or manual)", name, v)
+		return ""
+	}
+}
+
+// ParseALPNProtocols splits each raw value on commas, trims whitespace, drops
+// empty entries and de-duplicates while keeping first-seen order. Protocol names
+// are case-sensitive and kept as written. Returns nil when nothing remains.
+func ParseALPNProtocols(raw ...string) []string {
+	var out []string
+	seen := make(map[string]bool)
+	for _, r := range raw {
+		for _, p := range strings.Split(r, ",") {
+			p = strings.TrimSpace(p)
+			if p == "" || seen[p] {
+				continue
+			}
+			seen[p] = true
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// ParseMinTLSVersion validates the min-version label/annotation value.
+// Returns "" if the value is absent or empty. Logs a warning and returns ""
+// for unrecognised values.
+func ParseMinTLSVersion(name, raw string) string {
+	v := strings.TrimSpace(raw)
+	switch v {
+	case "", "1.0", "1.1", "1.2", "1.3":
+		return v
+	default:
+		log.Printf("container %s: ignoring invalid min-version %q (must be 1.0, 1.1, 1.2, or 1.3)", name, v)
 		return ""
 	}
 }

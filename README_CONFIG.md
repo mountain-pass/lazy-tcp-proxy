@@ -68,6 +68,9 @@ services:
 #      - "myapp.localhost:8080"    # domain:target_port — listen port auto-assigned from LISTEN_START_PORT
 #    traefik_tcp_hosts:
 #      - "mongo.localhost:27017"   # domain:target_port — listen port auto-assigned from LISTEN_START_PORT
+#    alpn_protocols:
+#      - "postgresql"             # extra TLS ALPN protocols on this service's Traefik routers
+#    min_version: "1.3"            # minimum TLS version (1.0-1.3) on this service's Traefik routers
 ```
 
 ### Docker Compose setup
@@ -126,6 +129,9 @@ services:
       - "myapp.localhost:8080"    # domain:target_port — listen port auto-assigned from LISTEN_START_PORT
     traefik_tcp_hosts:
       - "mongo.localhost:27017"   # domain:target_port — listen port auto-assigned from LISTEN_START_PORT
+    alpn_protocols:               # extra TLS ALPN protocols on this service's Traefik routers
+      - "postgresql"
+    min_version: "1.3"            # minimum TLS version (1.0, 1.1, 1.2, 1.3) on this service's Traefik routers
 ```
 
 See [README_LABELS.md](README_LABELS.md) for full descriptions of each field — the YAML fields

@@ -42,6 +42,8 @@ type ServiceEntry struct {
 	TraefikHosts     []string `yaml:"traefik_hosts,omitempty"     json:"traefik_hosts,omitempty"`
 	TraefikTCPHosts  []string `yaml:"traefik_tcp_hosts,omitempty"  json:"traefik_tcp_hosts,omitempty"`
 	Availability     string   `yaml:"availability,omitempty"       json:"availability,omitempty"`
+	ALPNProtocols    []string `yaml:"alpn_protocols,omitempty"     json:"alpn_protocols,omitempty"`
+	MinVersion       string   `yaml:"min_version,omitempty"        json:"min_version,omitempty"`
 }
 
 // Store manages a YAML config file on disk and the in-memory config it represents.
@@ -268,6 +270,8 @@ func entryToTargetInfo(entry ServiceEntry, alloc *types.PortAllocator) (types.Ta
 	info.APIKey = entry.APIKey
 	info.BasicAuth = entry.BasicAuth
 	info.Availability = types.ParseAvailabilityLabel(entry.Name, entry.Availability)
+	info.ALPNProtocols = types.ParseALPNProtocols(entry.ALPNProtocols...)
+	info.MinTLSVersion = types.ParseMinTLSVersion(entry.Name, entry.MinVersion)
 
 	if alloc != nil {
 		alloc.ClaimPorts(info.Ports)

@@ -2,7 +2,7 @@
 
 **Date Added**: 2026-10-17
 **Priority**: Medium
-**Status**: In Progress
+**Status**: Completed
 
 ## Problem Statement
 
@@ -44,18 +44,18 @@ Postgres 17+ clients using direct TLS (`sslnegotiation=direct`) offer ALPN `post
 
 ## Acceptance Criteria
 
-- [ ] A container with `traefik-tcp-hosts` and `alpn-protocols=postgresql` produces `tls.options.<name>.alpnProtocols = ["h2","http/1.1","acme-tls/1","postgresql"]` and its TCP router has `tls.options = <name>`.
-- [ ] Routers of other containers have no `options`; no `default` option is emitted.
-- [ ] `min-version=1.3` emits `minVersion: VersionTLS13` for that container's routers only; two containers with different values get separate options.
-- [ ] Identical settings on two containers share one option.
-- [ ] Whitespace, empty and duplicate entries in `alpn-protocols` are normalised; invalid `min-version` is ignored with a log line.
-- [ ] With no labels anywhere, `/traefik` output is unchanged (no `tls` key, no router `options`).
-- [ ] Works with `TRAEFIK_CERTRESOLVER=""` (router still gets `tls.options`).
-- [ ] Labels, annotations and config-store keys are all parsed.
-- [ ] Output is stable across repeated calls.
-- [ ] Validated against a real Traefik container: a direct-TLS ALPN `postgresql` handshake succeeds for the labelled host and an unlabelled host still rejects it.
-- [ ] Unit tests added; `golangci-lint run` and `go test ./...` pass.
-- [ ] README_LABELS.md updated.
+- [x] A container with `traefik-tcp-hosts` and `alpn-protocols=postgresql` produces `tls.options.<name>.alpnProtocols = ["h2","http/1.1","acme-tls/1","postgresql"]` and its TCP router has `tls.options = <name>`.
+- [x] Routers of other containers have no `options`; no `default` option is emitted.
+- [x] `min-version=1.3` emits `minVersion: VersionTLS13` for that container's routers only; two containers with different values get separate options.
+- [x] Identical settings on two containers share one option.
+- [x] Whitespace, empty and duplicate entries in `alpn-protocols` are normalised; invalid `min-version` is ignored with a log line.
+- [x] With no labels anywhere, `/traefik` output is unchanged (no `tls` key, no router `options`).
+- [x] Works with `TRAEFIK_CERTRESOLVER=""` (router still gets `tls.options`).
+- [x] Labels, annotations and config-store keys are all parsed.
+- [x] Output is stable across repeated calls.
+- [x] Validated against a real Traefik container: a direct-TLS ALPN `postgresql` handshake succeeds for the labelled host and an unlabelled host still rejects it.
+- [x] Unit tests added; `golangci-lint run` and `go test ./...` pass.
+- [x] README_LABELS.md updated.
 
 ## Dependencies
 
@@ -83,4 +83,4 @@ Out of scope for now (not requested):
 
 ## Implementation Notes
 
-See the plan file.
+See the plan file for actual vs. planned and the live Traefik validation results.
