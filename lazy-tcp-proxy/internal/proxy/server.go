@@ -156,14 +156,21 @@ type cronScheduler interface {
 	Unregister(targetID string)
 }
 
+// cronOnlyState tracks a container registered only for cron scheduling (no ports).
+type cronOnlyState struct {
+	info    types.TargetInfo
+	running bool
+}
+
 // ProxyServer manages TCP listeners and proxies connections to targets.
 type ProxyServer struct {
-	backend       containerBackend
-	ctx           context.Context
-	mu            sync.RWMutex
-	targets       map[int]*targetState     // keyed by TCP listen port
-	udpTargets    map[int]*udpListenerState // keyed by UDP listen port
-	nameToID      map[string]string        // ContainerName → ContainerID for cascade lookup
+	backend        containerBackend
+	ctx            context.Context
+	mu             sync.RWMutex
+	targets        map[int]*targetState     // keyed by TCP listen port
+	udpTargets     map[int]*udpListenerState // keyed by UDP listen port
+	cronOnlyTargets map[string]*cronOnlyState // keyed by ContainerID; port-less cron containers
+	nameToID       map[string]string        // ContainerName → ContainerID for cascade lookup
 	pollInterval  time.Duration
 	idleTimeout   time.Duration
 	startTimeout  time.Duration
@@ -200,11 +207,12 @@ func (s *ProxyServer) composeFlags(name string) (hasCompose, hasTar bool) {
 // NewServer creates a new ProxyServer backed by the given backend.
 func NewServer(ctx context.Context, b containerBackend, startTime time.Time, idleTimeout, pollInterval, startTimeout time.Duration, tlsConfig *tls.Config) *ProxyServer {
 	return &ProxyServer{
-		backend:       b,
-		ctx:           ctx,
-		targets:       make(map[int]*targetState),
-		udpTargets:    make(map[int]*udpListenerState),
-		nameToID:      make(map[string]string),
+		backend:         b,
+		ctx:             ctx,
+		targets:         make(map[int]*targetState),
+		udpTargets:      make(map[int]*udpListenerState),
+		cronOnlyTargets: make(map[string]*cronOnlyState),
+		nameToID:        make(map[string]string),
 		idleTimeout:   idleTimeout,
 		startTimeout:  startTimeout,
 		pollInterval:  pollInterval,
@@ -219,9 +227,27 @@ func (s *ProxyServer) SetScheduler(sched cronScheduler) {
 	s.sched = sched
 }
 
-// SetCollector injects the metrics collector. Must be called before Discover.
+// SetCollector injects the metrics collector and registers all already-tracked ports.
+// Ports discovered before this call are missed if the collector isn't set first, so
+// this back-fills them to handle the case where metrics initialisation happens after
+// initial target discovery.
 func (s *ProxyServer) SetCollector(c *metrics.Collector) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	now := time.Now()
 	s.collector = c
+	for _, ts := range s.targets {
+		c.RegisterPort(ts.listenPort, ts.info.ContainerName, false, types.EffectiveAvailability(ts.info))
+		if ts.running {
+			c.OnContainerRunning(ts.listenPort, false, now)
+		}
+	}
+	for _, uls := range s.udpTargets {
+		c.RegisterPort(uls.listenPort, uls.info.ContainerName, true, types.EffectiveAvailability(uls.info))
+		if uls.running {
+			c.OnContainerRunning(uls.listenPort, true, now)
+		}
+	}
 }
 
 // countingWriter wraps an io.Writer and accumulates the number of bytes written.
@@ -242,12 +268,16 @@ func (cw *countingWriter) Write(p []byte) (int, error) {
 func (s *ProxyServer) CronStart(ctx context.Context, targetID, targetName string) {
 	s.mu.RLock()
 	running, found := s.isRunning(targetID)
+	_, isCronOnly := s.cronOnlyTargets[targetID]
 	s.mu.RUnlock()
 	if !found {
 		log.Printf("scheduler: cron-start: \033[33m%s\033[0m not found, skipping", targetName)
 		return
 	}
-	if running {
+	// For cron-only containers (no ports) skip the in-memory running check —
+	// there are no active connections to track state, so it can be stale.
+	// docker start is idempotent if the container is already running.
+	if running && !isCronOnly {
 		log.Printf("scheduler: cron-start: \033[33m%s\033[0m already running, no action", targetName)
 		return
 	}
@@ -275,6 +305,9 @@ func (s *ProxyServer) CronStart(ctx context.Context, targetID, targetName string
 			}
 		}
 	}
+	if ct, ok := s.cronOnlyTargets[targetID]; ok {
+		ct.running = true
+	}
 	s.mu.Unlock()
 	log.Printf("scheduler: cron-start: started \033[33m%s\033[0m", targetName)
 
@@ -284,6 +317,11 @@ func (s *ProxyServer) CronStart(ctx context.Context, targetID, targetName string
 		if ts.info.ContainerID == targetID {
 			info = ts.info
 			break
+		}
+	}
+	if info.ContainerID == "" {
+		if ct, ok := s.cronOnlyTargets[targetID]; ok {
+			info = ct.info
 		}
 	}
 	s.mu.RUnlock()
@@ -333,6 +371,12 @@ func (s *ProxyServer) CronStop(ctx context.Context, targetID, targetName string)
 			}
 		}
 	}
+	if ct, ok := s.cronOnlyTargets[targetID]; ok {
+		ct.running = false
+		if info.ContainerID == "" {
+			info = ct.info
+		}
+	}
 	s.mu.Unlock()
 	log.Printf("scheduler: cron-stop: stopped \033[33m%s\033[0m", targetName)
 	if info.WebhookURL != "" {
@@ -362,6 +406,12 @@ func (s *ProxyServer) isRunning(targetID string) (running, found bool) {
 			}
 		}
 	}
+	if ct, ok := s.cronOnlyTargets[targetID]; ok {
+		found = true
+		if ct.running {
+			running = true
+		}
+	}
 	return
 }
 
@@ -370,7 +420,7 @@ func (s *ProxyServer) Snapshot() []TargetSnapshot {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	now := time.Now()
-	out := make([]TargetSnapshot, 0, len(s.targets)+len(s.udpTargets))
+	out := make([]TargetSnapshot, 0, len(s.targets)+len(s.udpTargets)+len(s.cronOnlyTargets))
 	for listenPort, ts := range s.targets {
 		effective := ts.lastActive
 		if effective.IsZero() {
@@ -429,6 +479,25 @@ func (s *ProxyServer) Snapshot() []TargetSnapshot {
 			IsUDP:              true,
 			HasAuth:            false,
 			Availability:       types.EffectiveAvailability(uls.info),
+			HasComposeFile:     hasCompose,
+			HasTarGz:           hasTar,
+		})
+	}
+	for _, ct := range s.cronOnlyTargets {
+		id := ct.info.ContainerID
+		if len(id) > 12 {
+			id = id[:12]
+		}
+		hasCompose, hasTar := s.composeFlags(ct.info.ContainerName)
+		t := s.startTime
+		out = append(out, TargetSnapshot{
+			ContainerID:        id,
+			ContainerName:      ct.info.ContainerName,
+			Running:            ct.running,
+			ContainerMissing:   ct.info.Missing,
+			LastActive:         &t,
+			LastActiveRelative: relativeTime(t, now),
+			Availability:       types.EffectiveAvailability(ct.info),
 			HasComposeFile:     hasCompose,
 			HasTarGz:           hasTar,
 		})
@@ -614,6 +683,11 @@ func (s *ProxyServer) RegisterTarget(info types.TargetInfo) {
 		(info.CronStart != "" || info.CronStop != "") {
 		s.sched.Register(info)
 	}
+
+	// Track port-less cron-only containers so CronStart/CronStop can find them.
+	if len(info.Ports) == 0 && len(info.UDPPorts) == 0 {
+		s.cronOnlyTargets[info.ContainerID] = &cronOnlyState{info: info, running: info.Running}
+	}
 }
 
 // RemoveTarget closes and removes all listeners for the given container.
@@ -649,6 +723,11 @@ func (s *ProxyServer) RemoveTarget(containerID string) {
 			delete(s.udpTargets, port)
 		}
 	}
+	if ct, ok := s.cronOnlyTargets[containerID]; ok {
+		log.Printf("proxy: removing cron-only target \033[33m%s\033[0m", ct.info.ContainerName)
+		delete(s.nameToID, ct.info.ContainerName)
+		delete(s.cronOnlyTargets, containerID)
+	}
 	if s.sched != nil {
 		s.sched.Unregister(containerID)
 	}
@@ -660,12 +739,15 @@ func (s *ProxyServer) RemoveTarget(containerID string) {
 func (s *ProxyServer) currentTargetsByID() map[string]types.TargetInfo {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	out := make(map[string]types.TargetInfo, len(s.targets)+len(s.udpTargets))
+	out := make(map[string]types.TargetInfo, len(s.targets)+len(s.udpTargets)+len(s.cronOnlyTargets))
 	for _, ts := range s.targets {
 		out[ts.info.ContainerID] = ts.info
 	}
 	for _, uls := range s.udpTargets {
 		out[uls.info.ContainerID] = uls.info
+	}
+	for id, ct := range s.cronOnlyTargets {
+		out[id] = ct.info
 	}
 	return out
 }
@@ -746,6 +828,12 @@ func (s *ProxyServer) ContainerStopped(containerID string) {
 			}
 		}
 	}
+	if ct, ok := s.cronOnlyTargets[containerID]; ok {
+		ct.running = false
+		if info.ContainerID == "" {
+			info = ct.info
+		}
+	}
 	s.mu.RUnlock()
 	// Reset upstream readiness state so the next cold start re-probes.
 	// If the container stopped externally while a retry loop was in progress,
@@ -818,6 +906,13 @@ func (s *ProxyServer) ContainerStarted(containerID string) {
 			if s.collector != nil {
 				s.collector.OnContainerRunning(uls.listenPort, true, now)
 			}
+		}
+	}
+	if ct, ok := s.cronOnlyTargets[containerID]; ok {
+		ct.running = true
+		ct.info.Missing = false
+		if info.ContainerID == "" {
+			info = ct.info
 		}
 	}
 	s.mu.Unlock()
@@ -1095,6 +1190,7 @@ func (s *ProxyServer) handleConn(conn net.Conn, ts *targetState) {
 			}
 			return
 		}
+		now := time.Now()
 		if !shared && s.collector != nil {
 			s.collector.RecordColdStart(ts.listenPort, false, time.Since(coldStart).Milliseconds())
 		}
@@ -1102,11 +1198,17 @@ func (s *ProxyServer) handleConn(conn net.Conn, ts *targetState) {
 		for _, t := range s.targets {
 			if t.info.ContainerID == ts.info.ContainerID {
 				t.running = true
+				if s.collector != nil {
+					s.collector.OnContainerRunning(t.listenPort, false, now)
+				}
 			}
 		}
 		for _, u := range s.udpTargets {
 			if u.info.ContainerID == ts.info.ContainerID {
 				u.running = true
+				if s.collector != nil {
+					s.collector.OnContainerRunning(u.listenPort, true, now)
+				}
 			}
 		}
 		s.mu.Unlock()

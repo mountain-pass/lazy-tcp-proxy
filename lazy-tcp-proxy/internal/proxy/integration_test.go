@@ -79,14 +79,15 @@ func newIntegrationServer(t *testing.T, host string) *ProxyServer {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	return &ProxyServer{
-		ctx:          ctx,
-		targets:      make(map[int]*targetState),
-		udpTargets:   make(map[int]*udpListenerState),
-		nameToID:     make(map[string]string),
-		idleTimeout:  5 * time.Minute,
-		startTimeout: 30 * time.Second,
-		pollInterval: 15 * time.Second,
-		backend:      &integrationMock{host: host},
+		ctx:             ctx,
+		targets:         make(map[int]*targetState),
+		udpTargets:      make(map[int]*udpListenerState),
+		cronOnlyTargets: make(map[string]*cronOnlyState),
+		nameToID:        make(map[string]string),
+		idleTimeout:     5 * time.Minute,
+		startTimeout:    30 * time.Second,
+		pollInterval:    15 * time.Second,
+		backend:         &integrationMock{host: host},
 	}
 }
 

@@ -672,13 +672,14 @@ func (m *mockBackend) WaitUntilHealthy(_ context.Context, _, _ string, _ time.Du
 
 func newTestServer() *ProxyServer {
 	return &ProxyServer{
-		ctx:          context.Background(),
-		targets:      make(map[int]*targetState),
-		udpTargets:   make(map[int]*udpListenerState),
-		nameToID:     make(map[string]string),
-		idleTimeout:  5 * time.Minute,
-		pollInterval: 15 * time.Second,
-		startTime:    time.Now().Add(-1 * time.Hour),
+		ctx:             context.Background(),
+		targets:         make(map[int]*targetState),
+		udpTargets:      make(map[int]*udpListenerState),
+		cronOnlyTargets: make(map[string]*cronOnlyState),
+		nameToID:        make(map[string]string),
+		idleTimeout:     5 * time.Minute,
+		pollInterval:    15 * time.Second,
+		startTime:       time.Now().Add(-1 * time.Hour),
 	}
 }
 

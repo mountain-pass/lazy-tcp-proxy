@@ -1,4 +1,3 @@
-recipes/postgres/ssl_certs/
 example/docker/lazy-tcp-proxy/
 .tmp-*
 *.tar

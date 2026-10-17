@@ -8,6 +8,27 @@ import (
 	"time"
 )
 
+// ServiceActivity holds the weekly usage heatmap for one (container_name, port, is_udp) tuple.
+// Each day field is a 24-element array indexed by hour-of-day (0–23).
+// Cell values: 0 = no activity (no uptime); 1 = active (uptime_ms_total > 0
+// but no connections started); 2 = active with connections (uptime_ms_total > 0
+// and at least one connection started), based on proxy_metrics rows from the
+// last 7 days for that weekday+hour.
+// Active is true if any cell across all seven days is non-zero.
+type ServiceActivity struct {
+	ContainerName string   `json:"container_name"`
+	Port          int      `json:"port"`
+	IsUDP         bool     `json:"is_udp"`
+	Mon           [24]int8 `json:"mon"`
+	Tue           [24]int8 `json:"tue"`
+	Wed           [24]int8 `json:"wed"`
+	Thu           [24]int8 `json:"thu"`
+	Fri           [24]int8 `json:"fri"`
+	Sat           [24]int8 `json:"sat"`
+	Sun           [24]int8 `json:"sun"`
+	Active        bool     `json:"active"`
+}
+
 // Snapshot is one minute of data for a single port, written as a row in proxy_metrics.
 type Snapshot struct {
 	RollupAt             time.Time
@@ -253,6 +274,12 @@ func (c *Collector) ContainerStopped(port int, isUDP bool) {
 	a.mu.Unlock()
 }
 
+// HourlyActivity queries the last 7 days of metrics and returns one entry per
+// (container_name, port, is_udp) with pre-aggregated day-of-week hour arrays.
+func (c *Collector) HourlyActivity(ctx context.Context) ([]ServiceActivity, error) {
+	return c.db.hourlyActivity(ctx)
+}
+
 // Run starts the 1-minute rollup loop. Blocks until ctx is cancelled.
 func (c *Collector) Run(ctx context.Context) {
 	defer c.db.close()
@@ -294,7 +321,12 @@ func (a *portAccumulator) rollup(windowEnd time.Time) Snapshot {
 	cStart  := a.containerStarts.Swap(0)
 	cStop   := a.containerStops.Swap(0)
 	active  := a.activeConns.Load() // gauge: not reset
-	peak    := a.peakConns.Swap(0)
+	// Seed the new window's peak with the current active count so long-lived
+	// connections spanning multiple rollup windows are reflected in peak.
+	peak := a.peakConns.Swap(active)
+	if peak < active {
+		peak = active
+	}
 
 	a.mu.Lock()
 

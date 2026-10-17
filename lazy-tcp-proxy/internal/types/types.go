@@ -78,6 +78,15 @@ func ParseAvailabilityLabel(name, raw string) string {
 	}
 }
 
+// ContainerMemoryStat holds the memory figures for a single Docker container,
+// running or stopped.
+type ContainerMemoryStat struct {
+	Name        string `json:"name"`
+	MemoryUsed  int64  `json:"memory_used"`
+	MemoryLimit int64  `json:"memory_limit"`
+	Running     bool   `json:"running"`
+}
+
 // TargetHandler is implemented by the proxy server to receive target updates.
 type TargetHandler interface {
 	RegisterTarget(info TargetInfo)

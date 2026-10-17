@@ -108,3 +108,16 @@ func TestResolveWebPort_FallsBackToStatusPort(t *testing.T) {
 		t.Errorf("got %d, want 9091", got)
 	}
 }
+
+func TestDiskUsage_RootFilesystem(t *testing.T) {
+	used, total, ok := diskUsage()
+	if !ok {
+		t.Fatal("expected diskUsage to succeed for /")
+	}
+	if total <= 0 {
+		t.Fatalf("expected total > 0, got %d", total)
+	}
+	if used < 0 || used > total {
+		t.Fatalf("expected 0 <= used <= total, got used=%d total=%d", used, total)
+	}
+}

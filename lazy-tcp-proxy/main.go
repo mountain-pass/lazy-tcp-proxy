@@ -11,7 +11,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -216,7 +215,13 @@ func resolveTraefikTransportTimeouts() *traefikpkg.TransportTimeouts {
 var statusDashboardHTML string
 
 func resolveCORSAllowOrigins() string {
-	return os.Getenv("CORS_ALLOW_ORIGINS")
+	v := os.Getenv("CORS_ALLOW_ORIGINS")
+	if v == "" {
+		log.Println("CORS: disabled (CORS_ALLOW_ORIGINS not set)")
+	} else {
+		log.Printf("CORS: enabled (Access-Control-Allow-Origin: %s)", v)
+	}
+	return v
 }
 
 func corsMiddleware(origins string, next http.Handler) http.Handler {
@@ -232,19 +237,70 @@ func corsMiddleware(origins string, next http.Handler) http.Handler {
 	})
 }
 
-func runStatusServer(ctx context.Context, srv *proxy.ProxyServer, port int, traefikProxyHost, traefikEntryPoint, traefikCertResolver, webHost string, webPort int, traefikTimeouts *traefikpkg.TransportTimeouts, recipesDir, corsOrigins string) {
+// diskUsage returns the used and total bytes of the root ("/") filesystem,
+// equivalent to `df /`. It reflects the filesystem the proxy process runs on
+// (the host filesystem, or the container's root mount when containerized).
+func diskUsage() (used, total int64, ok bool) {
+	var stat syscall.Statfs_t
+	if err := syscall.Statfs("/", &stat); err != nil {
+		return 0, 0, false
+	}
+	total = int64(stat.Blocks) * int64(stat.Bsize)
+	used = total - int64(stat.Bavail)*int64(stat.Bsize)
+	return used, total, true
+}
+
+func runStatusServer(ctx context.Context, srv *proxy.ProxyServer, mgr backendManager, metricsCollector **metrics.Collector, port int, traefikProxyHost, traefikEntryPoint, traefikCertResolver, webHost string, webPort int, traefikTimeouts *traefikpkg.TransportTimeouts, recipesDir, corsOrigins string) {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
-		var ms runtime.MemStats
-		runtime.ReadMemStats(&ms)
+	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
+		var memUsed, memTotal *int64
+		var memContainers *[]types.ContainerMemoryStat
+		if used, total, perContainer, err := mgr.ContainerMemoryStats(r.Context()); err == nil {
+			memUsed = &used
+			memTotal = &total
+			if len(perContainer) > 0 {
+				memContainers = &perContainer
+			}
+		}
+		var diskUsed, diskTotal *int64
+		if used, total, ok := diskUsage(); ok {
+			diskUsed = &used
+			diskTotal = &total
+		}
 		w.Header().Set("Content-Type", "application/json")
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
 		enc.Encode(map[string]any{ //nolint:errcheck
 			"services":     srv.Snapshot(),
-			"memory_used":  ms.Alloc,
-			"memory_total": ms.Sys,
+			"memory_used":  memUsed,
+			"memory_total": memTotal,
+			"containers":   memContainers,
+			"disk_used":    diskUsed,
+			"disk_total":   diskTotal,
 		})
+	})
+	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
+		col := *metricsCollector
+		if col == nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			json.NewEncoder(w).Encode(map[string]string{"error": "metrics not configured"}) //nolint:errcheck
+			return
+		}
+		rows, err := col.HourlyActivity(r.Context())
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()}) //nolint:errcheck
+			return
+		}
+		if rows == nil {
+			rows = []metrics.ServiceActivity{}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		enc := json.NewEncoder(w)
+		enc.SetIndent("", "  ")
+		enc.Encode(rows) //nolint:errcheck
 	})
 	mux.HandleFunc("/traefik", func(w http.ResponseWriter, r *http.Request) {
 		raw := srv.Snapshot()
@@ -331,6 +387,11 @@ type backendManager interface {
 	// SetPortAllocator wires the dynamic port allocator used to assign listen ports
 	// to traefik_hosts / traefik_tcp_hosts label entries.
 	SetPortAllocator(a *types.PortAllocator)
+	// ContainerMemoryStats returns the aggregate memory used by all running
+	// containers, the host's total physical memory, and a per-container
+	// breakdown, all in bytes. Returns (0, 0, nil, nil) on backends where this
+	// is not applicable (e.g. Kubernetes).
+	ContainerMemoryStats(ctx context.Context) (used, total int64, containers []types.ContainerMemoryStat, err error)
 }
 
 // discoverAndApply runs backend discovery, applies the YAML config overlay,
@@ -446,6 +507,10 @@ func main() {
 	ensureDir(recipesDir)
 	log.Printf("portainer: GET /portainer/templates and git clone /portainer/git available (RECIPES_DIR=%s)", recipesDir)
 
+	// metricsCollector is nil until PostgreSQL is connected (after network join).
+	// The HTTP server holds a pointer-to-pointer so it sees the update without locking.
+	var metricsCollector *metrics.Collector
+
 	// Start the HTTP status server
 	webPort := resolveWebPort()
 	webHost := resolveWebHost()
@@ -464,7 +529,7 @@ func main() {
 		log.Printf("traefik provider: GET /traefik available (TRAEFIK_PROXY_HOST=%s, TRAEFIK_ENTRYPOINT=%q, TRAEFIK_CERTRESOLVER=%q, TRAEFIK_DIAL_TIMEOUT=%s, TRAEFIK_RESPONSE_HEADER_TIMEOUT=%s, TRAEFIK_IDLE_CONN_TIMEOUT=%s)",
 			traefikProxyHost, traefikEntryPoint, traefikCertResolver,
 			traefikTimeouts.DialTimeout, traefikTimeouts.ResponseHeaderTimeout, traefikTimeouts.IdleConnTimeout)
-		runStatusServer(ctx, srv, webPort, traefikProxyHost, traefikEntryPoint, traefikCertResolver, webHost, webPort, traefikTimeouts, recipesDir, resolveCORSAllowOrigins())
+		runStatusServer(ctx, srv, mgr, &metricsCollector, webPort, traefikProxyHost, traefikEntryPoint, traefikCertResolver, webHost, webPort, traefikTimeouts, recipesDir, resolveCORSAllowOrigins())
 	}
 
 	// Load dynamic config file
@@ -507,8 +572,9 @@ func main() {
 		log.Printf("initial discovery error: %v", err)
 	}
 
-	// Initialise metrics collector after network join and target registration,
-	// so a locally hosted PostgreSQL container is reachable via its Docker network.
+	// Initialise metrics collector after network join and target registration so
+	// a locally hosted PostgreSQL container is reachable via its Docker network.
+	// SetCollector back-fills all already-registered ports automatically.
 	if pgURL := resolveMetricsPostgresURL(); pgURL != "" {
 		log.Printf("metrics: connecting to PostgreSQL...")
 		collector, err := metrics.New(ctx, pgURL)
@@ -516,6 +582,7 @@ func main() {
 			log.Printf("metrics: failed to connect to PostgreSQL (%v); metrics disabled", err)
 		} else {
 			log.Printf("metrics: connected to PostgreSQL successfully")
+			metricsCollector = collector
 			srv.SetCollector(collector)
 			go collector.Run(ctx)
 		}

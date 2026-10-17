@@ -3,6 +3,7 @@ package docker
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/containerd/errdefs"
+	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/events"
 	"github.com/moby/moby/api/types/swarm"
 	"github.com/moby/moby/client"
@@ -109,6 +111,14 @@ func (m *Manager) SelfContainerID() string {
 	return ""
 }
 
+// shortID returns the first 12 characters of id, or the full string if shorter.
+func shortID(id string) string {
+	if len(id) > 12 {
+		return id[:12]
+	}
+	return id
+}
+
 // Discover lists all containers (running or stopped) that have the proxy label,
 // joins their networks, and calls handler.RegisterTarget for each.
 func (m *Manager) Discover(ctx context.Context, handler types.TargetHandler) error {
@@ -128,7 +138,11 @@ func (m *Manager) Discover(ctx context.Context, handler types.TargetHandler) err
 	for _, c := range containers.Items {
 		info, err := m.containerToTargetInfo(ctx, c.ID)
 		if err != nil {
-			log.Printf("docker: discover: skipping container %s: %v", c.ID[:12], err)
+			containerName := shortID(c.ID)
+			if len(c.Names) > 0 {
+				containerName = strings.TrimPrefix(c.Names[0], "/")
+			}
+			log.Printf("docker: discover: skipping container \033[33m%s\033[0m: %v", containerName, err)
 			continue
 		}
 
@@ -178,8 +192,9 @@ func (m *Manager) containerToTargetInfo(ctx context.Context, containerID string)
 		traefikTCPHostSpecs = types.ParseTraefikHostSpecs("lazy-tcp-proxy.traefik-tcp-hosts", v)
 	}
 
-	if !hasPorts && (!hasUDPPorts || udpPortsStr == "") && len(traefikHostSpecs) == 0 && len(traefikTCPHostSpecs) == 0 {
-		return types.TargetInfo{}, fmt.Errorf("missing required label: one of lazy-tcp-proxy.ports, lazy-tcp-proxy.udp-ports, lazy-tcp-proxy.traefik-hosts, lazy-tcp-proxy.traefik-tcp-hosts")
+	hasCronStart := strings.TrimSpace(inspect.Config.Labels["lazy-tcp-proxy.cron-start"]) != ""
+	if !hasPorts && (!hasUDPPorts || udpPortsStr == "") && len(traefikHostSpecs) == 0 && len(traefikTCPHostSpecs) == 0 && !hasCronStart {
+		return types.TargetInfo{}, fmt.Errorf("missing required label: one of lazy-tcp-proxy.ports, lazy-tcp-proxy.udp-ports, lazy-tcp-proxy.traefik-hosts, lazy-tcp-proxy.traefik-tcp-hosts, lazy-tcp-proxy.cron-start")
 	}
 	var ports []types.PortMapping
 	if hasPorts {
@@ -338,7 +353,7 @@ func (m *Manager) JoinNetworks(ctx context.Context, networkIDs []string) ([]stri
 			continue
 		}
 
-		log.Printf("docker: joining network \033[32m%s\033[0m (%s)", netInfo.Network.Name, netID[:12])
+		log.Printf("docker: joining network \033[32m%s\033[0m (%s)", netInfo.Network.Name, shortID(netID))
 		if _, err := m.cli.NetworkConnect(ctx, netID, client.NetworkConnectOptions{Container: m.selfID}); err != nil {
 			if !strings.Contains(err.Error(), "already exists") {
 				log.Printf("docker: failed to join network \033[32m%s\033[0m: %v", netInfo.Network.Name, err)
@@ -577,7 +592,7 @@ func (m *Manager) GetUpstreamHost(ctx context.Context, targetID, preferNetworkID
 		}
 	}
 
-	return "", fmt.Errorf("no IP address found for container %s", targetID[:12])
+	return "", fmt.Errorf("no IP address found for container %s", shortID(targetID))
 }
 
 // isSwarmService reports whether targetID is a registered swarm service.
@@ -1079,8 +1094,9 @@ func (m *Manager) WatchEvents(ctx context.Context, handler types.TargetHandler) 
 					udpPortsVal := attrs["lazy-tcp-proxy.udp-ports"]
 					traefikHostsVal := attrs["lazy-tcp-proxy.traefik-hosts"]
 					traefikTCPHostsVal := attrs["lazy-tcp-proxy.traefik-tcp-hosts"]
-					if !hasPorts && udpPortsVal == "" && traefikHostsVal == "" && traefikTCPHostsVal == "" {
-						log.Printf("docker: event: container %s started but not proxied: missing required label: one of lazy-tcp-proxy.ports, lazy-tcp-proxy.udp-ports, lazy-tcp-proxy.traefik-hosts, lazy-tcp-proxy.traefik-tcp-hosts", name)
+					cronStartVal := attrs["lazy-tcp-proxy.cron-start"]
+					if !hasPorts && udpPortsVal == "" && traefikHostsVal == "" && traefikTCPHostsVal == "" && cronStartVal == "" {
+						log.Printf("docker: event: container %s started but not proxied: missing required label: one of lazy-tcp-proxy.ports, lazy-tcp-proxy.udp-ports, lazy-tcp-proxy.traefik-hosts, lazy-tcp-proxy.traefik-tcp-hosts, lazy-tcp-proxy.cron-start", name)
 						continue
 					}
 					valid := !hasPorts || traefikHostsVal != "" || traefikTCPHostsVal != "" // UDP/traefik-only: skip TCP ports validation
@@ -1147,4 +1163,75 @@ func (m *Manager) WatchEvents(ctx context.Context, handler types.TargetHandler) 
 			}
 		}
 	}
+}
+
+// ContainerMemoryStats returns the aggregate memory used by all running
+// containers, the host's total available memory, and a per-container
+// breakdown (covering both running and stopped containers), all in bytes.
+// Stopped containers report zero usage and their configured memory limit.
+// Uses a 3-second timeout.
+func (m *Manager) ContainerMemoryStats(ctx context.Context) (used, total int64, perContainer []types.ContainerMemoryStat, err error) {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	infoResult, err := m.cli.Info(ctx, client.InfoOptions{})
+	if err != nil {
+		return 0, 0, nil, fmt.Errorf("docker info: %w", err)
+	}
+	total = infoResult.Info.MemTotal
+
+	containers, err := m.cli.ContainerList(ctx, client.ContainerListOptions{All: true})
+	if err != nil {
+		return 0, total, nil, fmt.Errorf("container list: %w", err)
+	}
+
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	for _, c := range containers.Items {
+		wg.Add(1)
+		go func(id string, names []string, state container.ContainerState) {
+			defer wg.Done()
+			name := id
+			if len(names) > 0 {
+				name = strings.TrimPrefix(names[0], "/")
+			}
+
+			if state != container.StateRunning {
+				inspectResult, inspectErr := m.cli.ContainerInspect(ctx, id, client.ContainerInspectOptions{})
+				if inspectErr != nil || inspectResult.Container.HostConfig == nil {
+					return
+				}
+				limit := inspectResult.Container.HostConfig.Memory
+				if limit == 0 {
+					limit = total
+				}
+				mu.Lock()
+				perContainer = append(perContainer, types.ContainerMemoryStat{Name: name, MemoryUsed: 0, MemoryLimit: limit, Running: false})
+				mu.Unlock()
+				return
+			}
+
+			result, statErr := m.cli.ContainerStats(ctx, id, client.ContainerStatsOptions{Stream: false})
+			if statErr != nil {
+				return
+			}
+			defer result.Body.Close() //nolint:errcheck
+			var s container.StatsResponse
+			if decErr := json.NewDecoder(result.Body).Decode(&s); decErr != nil {
+				return
+			}
+			memUsage := s.MemoryStats.Usage
+			if cache, ok := s.MemoryStats.Stats["inactive_file"]; ok {
+				if cache < memUsage {
+					memUsage -= cache
+				}
+			}
+			mu.Lock()
+			used += int64(memUsage)                                                                                                                            //nolint:gosec
+			perContainer = append(perContainer, types.ContainerMemoryStat{Name: name, MemoryUsed: int64(memUsage), MemoryLimit: int64(s.MemoryStats.Limit), Running: true}) //nolint:gosec
+			mu.Unlock()
+		}(c.ID, c.Names, c.State)
+	}
+	wg.Wait()
+	return used, total, perContainer, nil
 }

@@ -90,6 +90,90 @@ func (db *postgresDB) close() {
 	db.pool.Close()
 }
 
+const queryHourlyActivity = `
+SELECT container_name, port, is_udp,
+       EXTRACT(DOW  FROM rollup_at)::int AS dow,
+       EXTRACT(HOUR FROM rollup_at)::int AS hr,
+       SUM(connections_peak) AS conns
+FROM proxy_metrics
+WHERE rollup_at >= NOW() - INTERVAL '7 days'
+  AND uptime_ms_total > 0
+GROUP BY container_name, port, is_udp, dow, hr
+ORDER BY container_name, port, is_udp, dow, hr
+`
+
+type serviceKey struct {
+	containerName string
+	port          int
+	isUDP         bool
+}
+
+// hourlyActivity returns one ServiceActivity per (container_name, port, is_udp) tuple.
+// DOW values: 0=Sunday, 1=Monday, 2=Tuesday, 3=Wednesday, 4=Thursday, 5=Friday, 6=Saturday.
+func (db *postgresDB) hourlyActivity(ctx context.Context) ([]ServiceActivity, error) {
+	rows, err := db.pool.Query(ctx, queryHourlyActivity)
+	if err != nil {
+		return nil, fmt.Errorf("hourlyActivity query: %w", err)
+	}
+	defer rows.Close()
+
+	index := make(map[serviceKey]*ServiceActivity)
+	var order []serviceKey
+
+	for rows.Next() {
+		var (
+			name  string
+			port  int
+			isUDP bool
+			dow   int
+			hr    int
+			conns int64
+		)
+		if err := rows.Scan(&name, &port, &isUDP, &dow, &hr, &conns); err != nil {
+			return nil, fmt.Errorf("hourlyActivity scan: %w", err)
+		}
+		k := serviceKey{name, port, isUDP}
+		sa, ok := index[k]
+		if !ok {
+			sa = &ServiceActivity{ContainerName: name, Port: port, IsUDP: isUDP}
+			index[k] = sa
+			order = append(order, k)
+		}
+		if hr >= 0 && hr < 24 {
+			val := int8(1)
+			if conns > 0 {
+				val = 2
+			}
+			switch dow {
+			case 0:
+				sa.Sun[hr] = val
+			case 1:
+				sa.Mon[hr] = val
+			case 2:
+				sa.Tue[hr] = val
+			case 3:
+				sa.Wed[hr] = val
+			case 4:
+				sa.Thu[hr] = val
+			case 5:
+				sa.Fri[hr] = val
+			case 6:
+				sa.Sat[hr] = val
+			}
+			sa.Active = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	out := make([]ServiceActivity, 0, len(order))
+	for _, k := range order {
+		out = append(out, *index[k])
+	}
+	return out, nil
+}
+
 // retryBuffer holds up to 5 failed snapshots, oldest first.
 // When full, push drops the oldest to make room for the newest.
 type retryBuffer struct {
