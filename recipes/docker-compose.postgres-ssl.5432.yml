@@ -1,22 +1,130 @@
+# PostgreSQL with SSL enforced - fully self-contained (no sibling files needed).
+#
+# Requires Docker Compose >= 2.23.1 (inline `configs` content).
+#
+# On first start, the ssl-init container creates a private CA and a server certificate
+# (stored in the postgres_ssl_certs volume) and writes pg_hba.conf (postgres_ssl_conf
+# volume). The server cert is re-issued when it is missing, expiring within 30 days, or
+# POSTGRES_SSL_HOSTS changes; the CA is only re-created if it is missing or expiring.
+#
+# POSTGRES_SSL_HOSTS: comma-separated DNS names / IPs added to the certificate SANs
+# (127.0.0.1 is always included). Set it to the hostname clients use to reach the proxy
+# if you connect with sslmode=verify-full.
+#
+# To extract the CA certificate for clients:
+#   docker run --rm -v postgres-ssl_postgres_ssl_certs:/c alpine cat /c/ca.crt > ca.crt
 name: postgres-ssl
 
+configs:
+  generate_certs:
+    content: |
+      #!/bin/sh
+      set -e
+
+      CERT_DIR=/certs
+      CA_KEY=$$CERT_DIR/ca.key
+      CA_CERT=$$CERT_DIR/ca.crt
+      SERVER_KEY=$$CERT_DIR/server.key
+      SERVER_CERT=$$CERT_DIR/server.crt
+      SERVER_CSR=$$CERT_DIR/server.csr
+      SAN_FILE=$$CERT_DIR/san.txt
+      THIRTY_DAYS=2592000
+
+      # Build the subjectAltName value from POSTGRES_SSL_HOSTS (+ 127.0.0.1)
+      SAN=""
+      for h in $$(echo "$$SSL_HOSTS" | tr ',' ' '); do
+        case "$$h" in
+          *:*) SAN="$$SAN,IP:$$h" ;;
+          *[!0-9.]*) SAN="$$SAN,DNS:$$h" ;;
+          *) SAN="$$SAN,IP:$$h" ;;
+        esac
+      done
+      SAN="$$(echo "$$SAN" | cut -c2-),IP:127.0.0.1"
+
+      # 1. CA: only (re)create when missing or expiring; clients keep trusting it otherwise
+      NEW_CA=0
+      if [ ! -f "$$CA_CERT" ] || [ ! -f "$$CA_KEY" ] || ! openssl x509 -checkend $$THIRTY_DAYS -noout -in "$$CA_CERT" >/dev/null 2>&1; then
+        echo "Generating CA certificate..."
+        openssl req -new -x509 -days 3650 -nodes \
+          -keyout "$$CA_KEY" \
+          -out "$$CA_CERT" \
+          -subj "/CN=MAP Local CA/O=MAP Development/C=AU"
+        NEW_CA=1
+      fi
+
+      # 2. Server cert: re-issue when missing, new CA, expiring, or SANs changed
+      if [ $$NEW_CA -eq 0 ] && [ -f "$$SERVER_CERT" ] && [ -f "$$SERVER_KEY" ] \
+         && [ "$$(cat "$$SAN_FILE" 2>/dev/null)" = "$$SAN" ] \
+         && openssl x509 -checkend $$THIRTY_DAYS -noout -in "$$SERVER_CERT" >/dev/null 2>&1; then
+        echo "SSL certificates already exist and are valid. Skipping generation."
+      else
+        echo "Generating server certificate (SAN: $$SAN)..."
+        openssl genrsa -out "$$SERVER_KEY" 2048
+        openssl req -new -key "$$SERVER_KEY" -out "$$SERVER_CSR" \
+          -subj "/CN=postgres/O=MAP Development/C=AU"
+        printf 'subjectAltName = %s\n' "$$SAN" > /tmp/san.cnf
+        openssl x509 -req -days 3650 \
+          -in "$$SERVER_CSR" \
+          -CA "$$CA_CERT" \
+          -CAkey "$$CA_KEY" \
+          -CAcreateserial \
+          -out "$$SERVER_CERT" \
+          -extfile /tmp/san.cnf
+        echo "$$SAN" > "$$SAN_FILE"
+        rm -f "$$SERVER_CSR" "$$CERT_DIR/ca.srl"
+      fi
+
+      # 3. Permissions: postgres (uid 70 in the alpine image) needs the server key, not the CA key
+      chmod 600 "$$SERVER_KEY" "$$CA_KEY"
+      chmod 644 "$$SERVER_CERT" "$$CA_CERT" "$$SAN_FILE"
+      chown 70:70 "$$SERVER_KEY" "$$SERVER_CERT" "$$CA_CERT"
+      chown 0:0 "$$CA_KEY"
+
+      echo "SSL certificates ready in $$CERT_DIR"
+
+  pg_hba:
+    content: |
+      # Only allow SSL connections
+      # TYPE  DATABASE  USER  ADDRESS      METHOD
+
+      # Allow local unix-domain socket connections (used by healthcheck / pg_isready)
+      local   all       all                scram-sha-256
+
+      # Reject all non-SSL TCP connections; allow only SSL
+      hostssl all       all   0.0.0.0/0    scram-sha-256
+      hostssl all       all   ::/0         scram-sha-256
+
 services:
-  # Temporary init container that generates self-signed SSL certificates
-  # Exits after generating certs; postgres waits for it via depends_on
-  ssl-cert-init:
-    image: alpine:3.20
-    container_name: ssl-cert-init
-    command: sh -c "apk add --no-cache openssl && sh /scripts/generate-certs.sh"
+  # Temporary init container: generates certs and pg_hba.conf into named volumes, then exits.
+  # Uses the alpine/openssl image (alpine + openssl preinstalled, so no package download).
+  ssl-init:
+    image: alpine/openssl:3.5.9
+    container_name: postgres-ssl-init
+    user: root
+    entrypoint: ["sh", "-ec"]
+    command:
+      - |
+        sh /scripts/generate-certs.sh
+        cp /scripts/pg_hba.conf /conf/pg_hba.conf
+        chown 70:70 /conf/pg_hba.conf
+        chmod 644 /conf/pg_hba.conf
+    environment:
+      SSL_HOSTS: ${POSTGRES_SSL_HOSTS:-postgres,localhost}
+    configs:
+      - source: generate_certs
+        target: /scripts/generate-certs.sh
+      - source: pg_hba
+        target: /scripts/pg_hba.conf
     volumes:
-      - ./postgres/ssl_certs:/certs
-      - ./postgres/generate-certs.sh:/scripts/generate-certs.sh:ro
+      - postgres_ssl_certs:/certs
+      - postgres_ssl_conf:/conf
 
   postgres_ssl:
     image: postgres:17.6-alpine3.22
     container_name: postgres-ssl
     restart: unless-stopped
     depends_on:
-      ssl-cert-init:
+      ssl-init:
         condition: service_completed_successfully
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-admin}
@@ -26,8 +134,8 @@ services:
         #      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data_176_ssl:/var/lib/postgresql/data
-      - ./postgres/ssl_certs:/var/lib/postgresql/certs:ro
-      - ./postgres/pg_hba.conf:/var/lib/postgresql/pg_hba.conf:ro
+      - postgres_ssl_certs:/var/lib/postgresql/certs:ro
+      - postgres_ssl_conf:/var/lib/postgresql/conf:ro
     # Enable SSL and point to the generated certificates
     command: >
       postgres
@@ -35,7 +143,7 @@ services:
         -c ssl_cert_file=/var/lib/postgresql/certs/server.crt
         -c ssl_key_file=/var/lib/postgresql/certs/server.key
         -c ssl_ca_file=/var/lib/postgresql/certs/ca.crt
-        -c hba_file=/var/lib/postgresql/pg_hba.conf
+        -c hba_file=/var/lib/postgresql/conf/pg_hba.conf
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-admin}"]
       interval: 10s
@@ -47,3 +155,5 @@ services:
 
 volumes:
   postgres_data_176_ssl:
+  postgres_ssl_certs:
+  postgres_ssl_conf:
