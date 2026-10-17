@@ -120,3 +120,4 @@
 | REQ-116 | Traefik TLS ALPN Protocols via Container Label                            | Medium | Completed     | 2026-10-17 | [2026-10-17-traefik-tls-alpn-protocols-label.md](2026-10-17-traefik-tls-alpn-protocols-label.md) |
 | REQ-117 | Fix: Omit Empty `http` Section from `/traefik` Payload                    | High   | Completed     | 2026-10-17 | [2026-10-17-fix-traefik-empty-http-section.md](2026-10-17-fix-traefik-empty-http-section.md) |
 | REQ-118 | Postgres Recipe: Traefik TLS Connection Comments                          | Low    | Completed     | 2026-10-17 | [2026-10-17-postgres-recipe-traefik-tls-comments.md](2026-10-17-postgres-recipe-traefik-tls-comments.md) |
+| REQ-119 | Postgres Recipe: Node.js (node-postgres) Connection Comments               | Low    | Completed     | 2026-10-17 | [2026-10-17-postgres-recipe-node-pg-comments.md](2026-10-17-postgres-recipe-node-pg-comments.md) |
