@@ -2,7 +2,7 @@
 
 **Date Added**: 2026-10-16
 **Priority**: Medium
-**Status**: In Progress
+**Status**: Completed
 
 ## Problem Statement
 
@@ -15,7 +15,8 @@
 3. The cert-generation logic (CA + server cert, SANs `postgres`, `localhost`, `127.0.0.1`, skip if valid for >30 days, regenerate when expiring, key mode 600, ownership uid/gid 70) must be defined inside the compose file.
 4. Certificates must persist in a named volume (replacing the `./postgres/ssl_certs` bind mount) and be shared read-only with the postgres container.
 5. Generated behaviour must be identical to today's recipe: postgres starts with `ssl=on`, the same cert/key/CA paths and the custom `hba_file`; the `lazy-tcp-proxy.*` labels and healthcheck are unchanged.
-6. `recipes/postgres/` (script, `pg_hba.conf`) and the `.gitignore` entry for `recipes/postgres/ssl_certs/` are removed once nothing references them.
+6. The CA is only re-created when missing/expiring; the server cert is re-issued when missing, expiring, or the SAN list changes. SANs are configurable via `POSTGRES_SSL_HOSTS` (default `postgres,localhost`; `127.0.0.1` always added).
+7. `recipes/postgres/` (script, `pg_hba.conf`) and the `.gitignore` entry for `recipes/postgres/ssl_certs/` are removed once nothing references them.
 
 ## User Experience Requirements
 
@@ -36,13 +37,13 @@
 
 ## Acceptance Criteria
 
-- [ ] The recipe file has no bind mounts and no references to files outside itself.
-- [ ] From an empty directory containing only the compose file, `docker compose up` starts postgres with SSL enabled.
-- [ ] `psql "sslmode=require"` connects; a non-SSL (`sslmode=disable`) TCP connection is rejected by `pg_hba.conf`.
-- [ ] A second `up` does not regenerate valid certs; certs expiring in <30 days are regenerated.
-- [ ] `server.key` is `0600` and owned by uid 70 inside the postgres container.
-- [ ] `recipes/postgres/` and the obsolete `.gitignore` line are removed.
-- [ ] The recipe still loads correctly via the `/portainer` template/recipe handling.
+- [x] The recipe file has no bind mounts and no references to files outside itself.
+- [x] From an empty directory containing only the compose file, `docker compose up` starts postgres with SSL enabled.
+- [x] `psql "sslmode=require"` connects; a non-SSL (`sslmode=disable`) TCP connection is rejected by `pg_hba.conf`.
+- [x] A second `up` does not regenerate valid certs; certs expiring in <30 days are regenerated.
+- [x] `server.key` is `0600` and owned by uid 70 inside the postgres container.
+- [x] `recipes/postgres/` and the obsolete `.gitignore` line are removed.
+- [x] The recipe still loads correctly via the `/portainer` template/recipe handling.
 
 ## Dependencies
 
@@ -57,4 +58,4 @@
 
 ## Implementation Notes
 
-To be completed in the Plan phase.
+See the plan file for actual vs. planned.

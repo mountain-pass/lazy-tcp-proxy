@@ -2,7 +2,7 @@
 
 **Requirement**: [2026-10-16-self-contained-postgres-ssl-recipe.md](2026-10-16-self-contained-postgres-ssl-recipe.md)
 **Date**: 2026-10-16
-**Status**: Draft
+**Status**: Implemented
 
 ## Decisions Applied
 
@@ -84,3 +84,12 @@ No Go changes. Validation is manual (Docker and Compose are available in this en
 - Requires Compose ≥ 2.23.1 for inline `content:`; older versions fail on `configs`. Documented in the file header.
 - Renaming the init service/volumes means existing deployments get fresh certs and the old `postgres_data_176_ssl` data volume is untouched.
 - Config mount ownership/mode support differs between Compose versions; the script copies the file rather than relying on mount ownership.
+
+## Implementation Notes (actual vs. planned)
+
+- Followed Option A (inline `configs`), plus the three approved additions: stable CA / server-only re-issue, configurable SANs (`POSTGRES_SSL_HOSTS`), and a smaller init image.
+- **Deviation — init image:** planned `postgres:17.6-alpine3.22` (assumed to ship `openssl`). Testing showed it does not, and `apk` needs network access. Switched to `alpine/openssl:3.5.9` (the design's stated fallback); the `apk add` step was removed entirely.
+- **Deviation — `mode:` on configs:** dropped; Compose ignores it outside Swarm. The script copies `pg_hba.conf` and sets ownership/permissions itself.
+- Script avoids `${...}` so the Portainer parser sees only `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `POSTGRES_SSL_HOSTS` (and the commented `POSTGRES_PORT`).
+- Verified with a real daemon from an empty directory: init exits 0, postgres healthy, `sslmode=require` connects (`ssl=t`), `sslmode=disable` rejected by `pg_hba.conf`, second run skips generation, changed `POSTGRES_SSL_HOSTS` re-issues the server cert, `server.key` is `600` uid 70, cert/conf volumes are read-only in postgres.
+- `go test ./...`: all packages pass except the root package, which fails to build because `html/dist` is not built in this environment (pre-existing, unrelated). `golangci-lint` not re-run as no Go code changed.
