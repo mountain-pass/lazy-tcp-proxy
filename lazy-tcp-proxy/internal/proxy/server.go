@@ -173,6 +173,7 @@ type ProxyServer struct {
 	udpTargets     map[int]*udpListenerState // keyed by UDP listen port
 	cronOnlyTargets map[string]*cronOnlyState // keyed by ContainerID; port-less cron containers
 	nameToID       map[string]string        // ContainerName → ContainerID for cascade lookup
+	cascadeLocks   sync.Map                 // upstream ContainerID → *sync.Mutex; serialises its cascades
 	pollInterval  time.Duration
 	idleTimeout   time.Duration
 	startTimeout  time.Duration
@@ -1434,8 +1435,21 @@ func (s *ProxyServer) handleHTTPProxy(client, upstream net.Conn, ts *targetState
 	}
 }
 
+// cascadeLock returns the mutex that serialises cascade starts and stops for
+// the given upstream container.
+func (s *ProxyServer) cascadeLock(upstreamID string) *sync.Mutex {
+	m, _ := s.cascadeLocks.LoadOrStore(upstreamID, &sync.Mutex{})
+	return m.(*sync.Mutex)
+}
+
 // cascadeStart starts all registered dependants of upstream.
+// It waits for any in-flight cascadeStop of the same upstream to finish first:
+// a dependant that is still being stopped reports Running, so EnsureRunning
+// would skip it and leave it stopped once the stop completes.
 func (s *ProxyServer) cascadeStart(upstream types.TargetInfo) {
+	lock := s.cascadeLock(upstream.ContainerID)
+	lock.Lock()
+	defer lock.Unlock()
 	for _, depName := range upstream.Dependants {
 		s.mu.RLock()
 		depID, ok := s.nameToID[depName]
@@ -1474,9 +1488,20 @@ func (s *ProxyServer) cascadeStart(upstream types.TargetInfo) {
 }
 
 // cascadeStop stops all registered dependants of upstream that are still running.
+// It aborts as soon as upstream is running again (woken while the cascade was in
+// progress); the cascadeStart for that wake then restarts anything already stopped.
 func (s *ProxyServer) cascadeStop(upstream types.TargetInfo) {
+	lock := s.cascadeLock(upstream.ContainerID)
+	lock.Lock()
+	defer lock.Unlock()
 	for _, depName := range upstream.Dependants {
 		s.mu.RLock()
+		if upstreamRunning, _ := s.isRunning(upstream.ContainerID); upstreamRunning {
+			s.mu.RUnlock()
+			log.Printf("proxy: cascade stop: \033[33m%s\033[0m is running again, aborting",
+				upstream.ContainerName)
+			return
+		}
 		depID, ok := s.nameToID[depName]
 		// Check whether any mapping for this dependant is still running.
 		running := false
