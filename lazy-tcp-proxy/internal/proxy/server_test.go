@@ -859,6 +859,108 @@ func TestCascadeStop_TriggeredByCheckInactivity(t *testing.T) {
 	}
 }
 
+// blockingStop returns a stop func that blocks on stopping blockID until release
+// is closed, reporting the moment it starts blocking on entered.
+func blockingStop(blockID string, entered chan<- struct{}, release <-chan struct{}, record func(string)) func(string) {
+	return func(id string) {
+		record("stop:" + id)
+		if id == blockID {
+			close(entered)
+			<-release
+		}
+		record("stopped:" + id)
+	}
+}
+
+// A wake during a cascade stop must not skip a dependant that is still being
+// stopped: the cascade start waits for the stop and then starts it again.
+func TestCascadeStart_WaitsForInFlightCascadeStop(t *testing.T) {
+	var mu sync.Mutex
+	var events []string
+	record := func(e string) { mu.Lock(); events = append(events, e); mu.Unlock() }
+	entered, release := make(chan struct{}), make(chan struct{})
+	started := make(chan string, 1)
+
+	s := newTestServerWithStartStopper(func(id string) {
+		record("start:" + id)
+		started <- id
+	}, blockingStop("chrome-id", entered, release, record))
+	populateCascadeTargets(s, true, true)
+
+	s.ContainerStopped("hub-id")
+	<-entered // chrome is being stopped
+
+	s.ContainerStarted("hub-id") // woken mid-cascade
+	select {
+	case id := <-started:
+		t.Fatalf("EnsureRunning(%s) called while chrome was still stopping", id)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(release)
+	select {
+	case id := <-started:
+		if id != "chrome-id" {
+			t.Fatalf("expected chrome-id to be started, got %s", id)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("chrome was not restarted after the cascade stop finished")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	want := []string{"stop:chrome-id", "stopped:chrome-id", "start:chrome-id"}
+	if fmt.Sprint(events) != fmt.Sprint(want) {
+		t.Errorf("events = %v, want %v", events, want)
+	}
+}
+
+// A cascade stop stops no further dependants once the upstream runs again.
+func TestCascadeStop_AbortsWhenUpstreamRunningAgain(t *testing.T) {
+	var mu sync.Mutex
+	var stops []string
+	record := func(e string) {
+		if strings.HasPrefix(e, "stop:") {
+			mu.Lock()
+			stops = append(stops, strings.TrimPrefix(e, "stop:"))
+			mu.Unlock()
+		}
+	}
+	entered, release := make(chan struct{}), make(chan struct{})
+	s := newTestServerWithStartStopper(nil, blockingStop("chrome-id", entered, release, record))
+	populateCascadeTargets(s, false, true) // hub just stopped, chrome still running
+	s.targets[9000].info.Dependants = []string{"chrome", "db"}
+	s.targets[9002] = &targetState{
+		info:       types.TargetInfo{ContainerID: "db-id", ContainerName: "db", Running: true},
+		targetPort: 5432,
+		running:    true,
+		lastActive: time.Now(),
+	}
+	s.nameToID["db"] = "db-id"
+
+	done := make(chan struct{})
+	go func() {
+		s.cascadeStop(s.targets[9000].info)
+		close(done)
+	}()
+	<-entered
+	s.mu.Lock()
+	s.targets[9000].running = true // hub woken while chrome is stopping
+	s.mu.Unlock()
+	close(release)
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("cascadeStop did not return")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if fmt.Sprint(stops) != "[chrome-id]" {
+		t.Errorf("stopped %v, want only [chrome-id] (db must be left running)", stops)
+	}
+}
+
 // ---- relativeTime ----
 
 func TestRelativeTime(t *testing.T) {
